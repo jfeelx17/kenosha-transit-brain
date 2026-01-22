@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kenosha Transit Brain - Upload</title>
+    <link rel="stylesheet" href="/static/css/upload.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚌 Kenosha Transit Brain</h1>
+            <p class="subtitle">Upload source files for processing</p>
+        </header>
+
+        <div class="upload-grid">
+            <!-- Schedule Upload -->
+            <div class="upload-card" data-type="schedule">
+                <div class="card-header">
+                    <h2>📅 Schedules</h2>
+                    <span class="file-count">{{ files.schedule|length }} file(s)</span>
+                </div>
+                <div class="drop-zone" id="drop-schedule">
+                    <div class="drop-content">
+                        <div class="drop-icon">📄</div>
+                        <p>Drop PDF here or <label class="file-label">browse<input type="file" accept=".pdf" data-type="schedule" hidden></label></p>
+                        <small>Schedule PDFs (2025, etc.)</small>
+                    </div>
+                </div>
+                <div class="file-list" id="files-schedule">
+                    {% for file in files.schedule %}
+                    <div class="file-item">
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="file-size">{{ (file.size / 1024 / 1024)|round(2) }} MB</span>
+                        <button class="delete-btn" onclick="deleteFile('schedule', '{{ file.name }}')">×</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Map Upload -->
+            <div class="upload-card" data-type="map">
+                <div class="card-header">
+                    <h2>🗺️ Route Maps</h2>
+                    <span class="file-count">{{ files.map|length }} file(s)</span>
+                </div>
+                <div class="drop-zone" id="drop-map">
+                    <div class="drop-content">
+                        <div class="drop-icon">🗺️</div>
+                        <p>Drop PDF here or <label class="file-label">browse<input type="file" accept=".pdf" data-type="map" hidden></label></p>
+                        <small>Route map PDFs</small>
+                    </div>
+                </div>
+                <div class="file-list" id="files-map">
+                    {% for file in files.map %}
+                    <div class="file-item">
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="file-size">{{ (file.size / 1024 / 1024)|round(2) }} MB</span>
+                        <button class="delete-btn" onclick="deleteFile('map', '{{ file.name }}')">×</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- GTFS Upload -->
+            <div class="upload-card" data-type="gtfs">
+                <div class="card-header">
+                    <h2>📦 GTFS Feeds</h2>
+                    <span class="file-count">{{ files.gtfs|length }} file(s)</span>
+                </div>
+                <div class="drop-zone" id="drop-gtfs">
+                    <div class="drop-content">
+                        <div class="drop-icon">📦</div>
+                        <p>Drop ZIP here or <label class="file-label">browse<input type="file" accept=".zip" data-type="gtfs" hidden></label></p>
+                        <small>GTFS static feed ZIP files</small>
+                    </div>
+                </div>
+                <div class="file-list" id="files-gtfs">
+                    {% for file in files.gtfs %}
+                    <div class="file-item">
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="file-size">{{ (file.size / 1024 / 1024)|round(2) }} MB</span>
+                        <button class="delete-btn" onclick="deleteFile('gtfs', '{{ file.name }}')">×</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- API Config Upload -->
+            <div class="upload-card" data-type="api">
+                <div class="card-header">
+                    <h2>🔌 API Config</h2>
+                    <span class="file-count">{{ files.api|length }} file(s)</span>
+                </div>
+                <div class="drop-zone" id="drop-api">
+                    <div class="drop-content">
+                        <div class="drop-icon">🔌</div>
+                        <p>Drop JSON here or <label class="file-label">browse<input type="file" accept=".json" data-type="api" hidden></label></p>
+                        <small>API endpoint configuration</small>
+                    </div>
+                </div>
+                <div class="file-list" id="files-api">
+                    {% for file in files.api %}
+                    <div class="file-item">
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="file-size">{{ (file.size / 1024)|round(2) }} KB</span>
+                        <button class="delete-btn" onclick="deleteFile('api', '{{ file.name }}')">×</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button class="process-btn" id="processBtn" onclick="processFiles()">
+                <span class="btn-icon">⚡</span>
+                Process Files
+            </button>
+            <div class="status" id="status"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/upload.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Processed data files (can be large)
+data/*.pdf
+data/*.html
+data/*.json
+data/*.pb
+data/*.zip
+
+# BUT keep uploads directory tracked (source files)
+!uploads/
+!uploads/**/*.pdf
+!uploads/**/*.zip
+!uploads/**/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
