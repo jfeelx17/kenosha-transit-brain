@@ -2,6 +2,17 @@
  * Horizontal row of route toggles. Tapping a chip hides/shows that route's
  * stops and buses. School trippers are grouped behind one "School" chip.
  */
+/** Perceived luminance of a #rrggbb colour, 0-255; used to keep chip text readable. */
+function luminance(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return 128;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
 export default function RouteChips({ routes, hidden, onToggle, onToggleMany, onShowAll }) {
   if (!routes.length) return null;
   const regular = routes.filter((r) => !r.isSchool);
@@ -25,7 +36,7 @@ export default function RouteChips({ routes, hidden, onToggle, onToggleMany, onS
           <button
             key={r.id}
             type="button"
-            className={`chip ${off ? '' : 'chip--on'}`}
+            className={`chip ${off ? '' : 'chip--on'} ${luminance(r.color) < 90 ? 'chip--dark' : ''}`}
             style={{ '--chip': r.color }}
             onClick={() => onToggle(String(r.id))}
             aria-pressed={!off}
@@ -38,7 +49,7 @@ export default function RouteChips({ routes, hidden, onToggle, onToggleMany, onS
       {school.length > 0 && (
         <button
           type="button"
-          className={`chip ${schoolOn ? 'chip--on' : ''}`}
+          className={`chip ${schoolOn ? 'chip--on' : ''} ${luminance(school[0].color) < 90 ? 'chip--dark' : ''}`}
           style={{ '--chip': school[0].color }}
           onClick={() => onToggleMany(schoolIds, schoolOn)}
           aria-pressed={schoolOn}

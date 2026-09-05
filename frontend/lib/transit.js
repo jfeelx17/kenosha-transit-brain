@@ -427,7 +427,9 @@ export function normalizeVehicle(v, fallbackRouteId = null) {
     routeId: pick(v, 'RouteId', 'RouteID', 'routeId') ?? v?.route?.id ?? fallbackRouteId,
     lat: num(pick(v, 'Latitude', 'Lat', 'lat', 'latitude')),
     lng: num(pick(v, 'Longitude', 'Lon', 'Lng', 'lng', 'lon', 'longitude')),
-    heading: num(pick(v, 'Heading', 'Bearing', 'heading', 'bearing', 'course')),
+    heading: num(
+      pick(v, 'Heading', 'Bearing', 'heading', 'bearing', 'course', 'courseOverGround', 'headingDegrees', 'bearingDegrees', 'orientation', 'rotation', 'angle', 'compass', 'direction')
+    ),
     speed: num(pick(v, 'Speed', 'speed')),
     // Passenger load as a percentage of capacity (automatic passenger counter).
     apcPercentage: apc,

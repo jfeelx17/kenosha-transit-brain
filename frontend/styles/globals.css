@@ -64,7 +64,8 @@ button { font: inherit; }
   border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer;
   opacity: 0.55; transition: opacity 0.15s, transform 0.1s;
 }
-.chip--on { opacity: 1; background: var(--chip); color: #0b1020; }
+.chip--on { opacity: 1; background: var(--chip); color: #0b1020; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55); }
+.chip--on.chip--dark { color: var(--text); }
 .chip--all.chip--on { background: var(--text); border-color: var(--text); }
 .chip:active { transform: scale(0.96); }
 

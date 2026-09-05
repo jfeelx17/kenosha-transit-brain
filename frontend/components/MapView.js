@@ -5,6 +5,7 @@ import { usePolling } from '../hooks/usePolling';
 import { useNow } from '../hooks/useNow';
 import { INLINE_STYLE, resolveMapStyle } from '../lib/mapStyle';
 import { crowdLevel, timeAgo } from '../lib/format';
+import { bearingBetween, distanceMeters } from '../lib/geo';
 import RouteChips from './RouteChips';
 import NextBusSheet from './NextBusSheet';
 
@@ -397,7 +398,7 @@ function createVehicleMarker(map, popupRef) {
   label.className = 'vehicle__label';
   el.append(arrow, label);
 
-  const entry = { marker: null, el, arrow, label, vehicle: null, route: null };
+  const entry = { marker: null, el, arrow, label, vehicle: null, route: null, heading: null };
   el.addEventListener('click', (e) => {
     e.stopPropagation(); // keep the map's click handler from closing the sheet
     showVehiclePopup(map, popupRef, entry);
@@ -407,12 +408,23 @@ function createVehicleMarker(map, popupRef) {
 }
 
 function updateVehicleMarker(entry, vehicle, route) {
+  // Prefer the feed's heading; otherwise derive it from movement since the last poll
+  // (buses that have not moved keep their last known heading).
+  let heading = vehicle.heading;
+  if (heading === null && entry.vehicle) {
+    const prev = { lat: entry.vehicle.lat, lng: entry.vehicle.lng };
+    const cur = { lat: vehicle.lat, lng: vehicle.lng };
+    if (distanceMeters(prev, cur) >= 8) heading = Math.round(bearingBetween(prev, cur));
+  }
+  if (heading === null) heading = entry.heading ?? null;
+  entry.heading = heading;
+
   entry.vehicle = vehicle;
   entry.route = route;
   entry.marker.setLngLat([vehicle.lng, vehicle.lat]);
   entry.el.style.setProperty('--vehicle', route?.color || '#38bdf8');
-  entry.el.classList.toggle('vehicle--noheading', vehicle.heading === null);
-  entry.arrow.style.transform = vehicle.heading === null ? '' : `rotate(${vehicle.heading}deg)`;
+  entry.el.classList.toggle('vehicle--noheading', heading === null);
+  entry.arrow.style.transform = heading === null ? '' : `rotate(${heading}deg)`;
   entry.label.textContent = route?.shortLabel ?? route?.shortName ?? String(vehicle.routeId ?? '');
   const level = crowdLevel(vehicle.apcPercentage);
   entry.el.title = `${route?.name || `Route ${vehicle.routeId}`} · Bus ${vehicle.name}${
