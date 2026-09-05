@@ -21,7 +21,7 @@ const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 100
  *  - vehiclesById:  Map<string, vehicle>                  (already polled by the map)
  *  - onClose():     dismiss the sheet
  */
-export default function NextBusSheet({ stop, routesById, vehiclesById, onClose }) {
+export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, onBack, isFavorite = false, onToggleFavorite }) {
   const [expanded, setExpanded] = useState(true);
   const now = useNow(1000);
 
@@ -91,6 +91,11 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose }
       </button>
 
       <header className="sheet__header">
+        {onBack && (
+          <button type="button" className="sheet__back" onClick={onBack} aria-label="Back to list">
+            ‹
+          </button>
+        )}
         <div className="sheet__title">
           <h2>{stop.name}</h2>
           <div className="sheet__routes">
@@ -102,6 +107,18 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose }
             <span className="sheet__stopid">Stop {stop.id}</span>
           </div>
         </div>
+        {onToggleFavorite && (
+          <button
+            type="button"
+            className={`sheet__star ${isFavorite ? 'is-on' : ''}`}
+            onClick={() => onToggleFavorite(stop)}
+            aria-pressed={isFavorite}
+            aria-label={isFavorite ? 'Remove from saved stops' : 'Save this stop'}
+            title={isFavorite ? 'Saved' : 'Save stop'}
+          >
+            {isFavorite ? '★' : '☆'}
+          </button>
+        )}
         <button type="button" className="sheet__close" onClick={onClose} aria-label="Close">
           ×
         </button>

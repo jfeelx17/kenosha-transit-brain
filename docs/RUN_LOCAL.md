@@ -79,8 +79,8 @@ the service worker on purpose, so install from a production build.
   (`hostname -I` prints the IP). On a Chromebook, also allow the ports: Settings -> Linux
   development environment -> Port forwarding -> add 3000 and 5000. Plain-HTTP over Wi-Fi works
   as a website but Chrome will not offer "Install" (no HTTPS).
-- **Anywhere, still free:** Tailscale's free personal plan plus `tailscale serve` gives the app an
-  HTTPS URL that only your own devices can reach, which also unlocks "Install" on the phone.
+- **Anywhere, still free:** put the map app on Vercel's free plan with the built-in access key.
+  See [DEPLOY_VERCEL.md](DEPLOY_VERCEL.md). That is the intended daily-use setup.
 
 ## 5. Configuration
 

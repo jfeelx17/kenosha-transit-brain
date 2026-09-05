@@ -1,6 +1,6 @@
 {
   "name": "kenosha-loop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Kenosha Loop - private live bus map for Kenosha Transit (1-user PWA)",
   "scripts": {

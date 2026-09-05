@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Map as MapLibreMap, Marker, Popup, GeolocateControl, LngLatBounds, setWorkerUrl } from 'maplibre-gl';
 import { fetchJson } from '../lib/client';
 import { usePolling } from '../hooks/usePolling';
@@ -6,12 +6,16 @@ import { useNow } from '../hooks/useNow';
 import { INLINE_STYLE, resolveMapStyle } from '../lib/mapStyle';
 import { crowdLevel, timeAgo } from '../lib/format';
 import { bearingBetween, distanceMeters } from '../lib/geo';
+import { useFavorites } from '../lib/favorites';
 import RouteChips from './RouteChips';
 import NextBusSheet from './NextBusSheet';
+import StopsSheet from './StopsSheet';
 
 const KENOSHA = { center: [-87.8212, 42.5847], zoom: 12.3 };
 const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 10000;
 const POLL_ROUTES_MS = 5 * 60 * 1000;
+const POLL_NEARBY_MS = 2 * 60 * 1000;
+const NEARBY_RADIUS_M = 1600; // about a mile
 const EMPTY_FC = { type: 'FeatureCollection', features: [] };
 const ARROW_SVG =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="currentColor" stroke="#0b1020" stroke-width="1.5" stroke-linejoin="round"/></svg>';
@@ -19,17 +23,25 @@ const ARROW_SVG =
 export default function MapView() {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
-  const markersRef = useRef(new Map()); // vehicleId -> { marker, el, arrow, label, vehicle, route }
+  const markersRef = useRef(new Map()); // vehicleId -> { marker, el, arrow, label, vehicle, route, heading }
   const popupRef = useRef(null);
   const tracesRef = useRef(new Map()); // routeId -> Promise<feature|null>
   const fittedRef = useRef(false);
+  const userMarkerRef = useRef(null);
 
   const [mapReady, setMapReady] = useState(false);
   const [basemapFallback, setBasemapFallback] = useState(false);
   // null until routes arrive; then school routes start hidden (they only run on school days).
   const [hiddenState, setHiddenRouteIds] = useState(null);
-  const [selectedStop, setSelectedStop] = useState(null);
+  // null | { type: 'stop', stop, from?: 'nearby' | 'saved' } | { type: 'list', mode: 'nearby' | 'saved' }
+  const [sheet, setSheet] = useState(null);
+  const [userPos, setUserPos] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [locateError, setLocateError] = useState(null);
+  const [favorites, toggleFavorite, isFavorite] = useFavorites();
   const now = useNow(1000);
+
+  const selectedStop = sheet?.type === 'stop' ? sheet.stop : null;
 
   // ---- routes (stops come bundled) -----------------------------------------
   const routesState = usePolling('routes', () => fetchJson('/api/routes'), POLL_ROUTES_MS, { keepPrevious: true });
@@ -45,6 +57,20 @@ export default function MapView() {
     [routes, hiddenRouteIds]
   );
   const visibleKey = visibleRoutes.map((r) => String(r.id)).join(',');
+
+  // stop id -> routes serving it (every route, hidden ones included)
+  const stopRouteIds = useMemo(() => {
+    const index = new Map();
+    for (const r of routes) {
+      for (const s of r.stops || []) {
+        const key = String(s.id);
+        const list = index.get(key) || [];
+        if (!list.includes(String(r.id))) list.push(String(r.id));
+        index.set(key, list);
+      }
+    }
+    return index;
+  }, [routes]);
 
   // ---- live vehicles for every visible route --------------------------------
   const vehiclesState = usePolling(
@@ -69,6 +95,16 @@ export default function MapView() {
 
   const stopsGeoJson = useMemo(() => buildStopsGeoJson(visibleRoutes), [visibleRoutes]);
 
+  // ---- nearby stops (only while the Near me list is open) -------------------
+  const posKey = userPos ? `${userPos.lat.toFixed(4)},${userPos.lng.toFixed(4)}` : '';
+  const nearbyOpen = sheet?.type === 'list' && sheet.mode === 'nearby';
+  const nearbyState = usePolling(
+    `nearby:${posKey}`,
+    () => fetchJson(`/api/stops/nearby?lat=${userPos.lat}&lon=${userPos.lng}&distance=${NEARBY_RADIUS_M}&limit=8`),
+    POLL_NEARBY_MS,
+    { enabled: Boolean(userPos) && nearbyOpen, keepPrevious: true }
+  );
+
   // ---- map bootstrap --------------------------------------------------------
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return undefined;
@@ -89,14 +125,15 @@ export default function MapView() {
     // Handy for poking at the map from the browser console (and for e2e tests).
     window.__kenoshaLoopMap = map;
 
-    map.addControl(
-      new GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        trackUserLocation: true,
-        showUserHeading: true,
-      }),
-      'top-right'
-    );
+    const geolocate = new GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showUserHeading: true,
+    });
+    geolocate.on('geolocate', (e) => {
+      if (e?.coords) setUserPos({ lat: e.coords.latitude, lng: e.coords.longitude });
+    });
+    map.addControl(geolocate, 'top-right');
 
     // If the basemap style cannot be fetched (offline, blocked host), fall back
     // to a plain dark background so stops and buses still render.
@@ -124,6 +161,8 @@ export default function MapView() {
       clearTimeout(fallbackTimer);
       markersRef.current.forEach((entry) => entry.marker.remove());
       markersRef.current.clear();
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
       map.remove();
       delete window.__kenoshaLoopMap;
       mapRef.current = null;
@@ -140,15 +179,12 @@ export default function MapView() {
       const features = map.queryRenderedFeatures(e.point, { layers: ['stops-hit'] });
       if (features.length) {
         const p = features[0].properties;
-        setSelectedStop({
-          id: String(p.id),
-          name: p.name,
-          lat: Number(p.lat),
-          lng: Number(p.lng),
-          routeIds: safeParseArray(p.routeIds),
+        setSheet({
+          type: 'stop',
+          stop: { id: String(p.id), name: p.name, lat: Number(p.lat), lng: Number(p.lng), routeIds: safeParseArray(p.routeIds) },
         });
       } else {
-        setSelectedStop(null);
+        setSheet(null);
       }
     };
     const onEnter = () => {
@@ -175,7 +211,7 @@ export default function MapView() {
     if (!fittedRef.current && stopsGeoJson.features.length) {
       const bounds = new LngLatBounds();
       stopsGeoJson.features.forEach((f) => bounds.extend(f.geometry.coordinates));
-      map.fitBounds(bounds, { padding: { top: 130, bottom: 60, left: 30, right: 30 }, maxZoom: 14, duration: 0 });
+      map.fitBounds(bounds, { padding: { top: 130, bottom: 90, left: 30, right: 30 }, maxZoom: 14, duration: 0 });
       fittedRef.current = true;
     }
   }, [mapReady, stopsGeoJson]);
@@ -239,6 +275,62 @@ export default function MapView() {
     }
   }, [mapReady, vehicles, routesById]);
 
+  // ---- user position dot ----------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !userPos) return;
+    if (!userMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'user-dot';
+      userMarkerRef.current = new Marker({ element: el, anchor: 'center' }).setLngLat([userPos.lng, userPos.lat]).addTo(map);
+    } else {
+      userMarkerRef.current.setLngLat([userPos.lng, userPos.lat]);
+    }
+  }, [mapReady, userPos]);
+
+  // ---- actions ----------------------------------------------------------------
+  const locateMe = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocateError('This browser has no location support.');
+      return;
+    }
+    setLocating(true);
+    setLocateError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setUserPos(p);
+        setLocating(false);
+        const map = mapRef.current;
+        if (map) map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 14.5), duration: 800 });
+      },
+      (err) => {
+        setLocating(false);
+        setLocateError(
+          err?.code === 1
+            ? 'Location permission was denied. Allow location for this site in your browser, or tap a stop on the map.'
+            : `Could not get your location (${err?.message || 'unknown error'}).`
+        );
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+    );
+  }, []);
+
+  const openNearby = useCallback(() => {
+    setSheet({ type: 'list', mode: 'nearby' });
+    if (!userPos) locateMe();
+  }, [userPos, locateMe]);
+
+  const openSaved = useCallback(() => setSheet({ type: 'list', mode: 'saved' }), []);
+
+  const selectStopFromList = useCallback((stop, from) => {
+    setSheet({ type: 'stop', stop, from });
+    const map = mapRef.current;
+    if (map && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)) {
+      map.flyTo({ center: [stop.lng, stop.lat], zoom: Math.max(map.getZoom(), 15), duration: 600 });
+    }
+  }, []);
+
   // ---- UI ---------------------------------------------------------------------
   const status = vehiclesState.error ? 'error' : vehiclesState.updatedAt ? 'live' : 'connecting';
   let statusText = 'Connecting…';
@@ -260,8 +352,19 @@ export default function MapView() {
       return next;
     });
 
+  const listStops = useMemo(() => {
+    if (sheet?.type !== 'list') return [];
+    if (sheet.mode === 'saved') {
+      return favorites.map((s) => ({
+        ...s,
+        distanceMeters: userPos ? Math.round(distanceMeters(userPos, { lat: s.lat, lng: s.lng })) : null,
+      }));
+    }
+    return (nearbyState.data?.stops ?? []).map((s) => ({ ...s, id: String(s.id) }));
+  }, [sheet, favorites, userPos, nearbyState.data]);
+
   return (
-    <div className={`app ${selectedStop ? 'app--sheet-open' : ''}`}>
+    <div className={`app ${sheet ? 'app--sheet-open' : ''}`}>
       <div ref={containerRef} className="map" />
 
       <header className="topbar">
@@ -296,8 +399,51 @@ export default function MapView() {
         </div>
       )}
 
-      {selectedStop && (
-        <NextBusSheet stop={selectedStop} routesById={routesById} vehiclesById={vehiclesById} onClose={() => setSelectedStop(null)} />
+      {!sheet && routes.length > 0 && (
+        <nav className="dock" aria-label="Quick actions">
+          <button type="button" className={locating ? 'is-busy' : ''} onClick={openNearby}>
+            📍 Near me
+          </button>
+          <button type="button" onClick={openSaved}>
+            ★ Saved{favorites.length ? ` (${favorites.length})` : ''}
+          </button>
+        </nav>
+      )}
+
+      {sheet?.type === 'list' && (
+        <StopsSheet
+          mode={sheet.mode}
+          stops={listStops}
+          loading={sheet.mode === 'nearby' && (locating || (Boolean(userPos) && nearbyState.loading && !nearbyState.data))}
+          error={sheet.mode === 'nearby' ? locateError || nearbyState.error?.message || null : null}
+          routesById={routesById}
+          stopRouteIds={stopRouteIds}
+          savedCount={favorites.length}
+          onSelectStop={(stop) => selectStopFromList(stop, sheet.mode)}
+          onSwitchMode={(mode) => {
+            setSheet({ type: 'list', mode });
+            if (mode === 'nearby' && !userPos) locateMe();
+          }}
+          onRefresh={() => {
+            if (sheet.mode === 'nearby') {
+              locateMe();
+              nearbyState.refresh();
+            }
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {sheet?.type === 'stop' && (
+        <NextBusSheet
+          stop={sheet.stop}
+          routesById={routesById}
+          vehiclesById={vehiclesById}
+          onClose={() => setSheet(null)}
+          onBack={sheet.from ? () => setSheet({ type: 'list', mode: sheet.from }) : undefined}
+          isFavorite={isFavorite(sheet.stop.id)}
+          onToggleFavorite={toggleFavorite}
+        />
       )}
     </div>
   );

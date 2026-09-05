@@ -203,6 +203,22 @@ export function arrivals(stopId, nowMs = Date.now()) {
   return groups;
 }
 
+export function nearby(lat, lon, distanceM = 1500) {
+  const seen = new Set();
+  const out = [];
+  for (const r of ROUTES) {
+    for (const s of r.Stops) {
+      if (seen.has(s.ID)) continue;
+      seen.add(s.ID);
+      const dx = (s.Longitude - lon) * Math.cos((lat * Math.PI) / 180) * 111320;
+      const dy = (s.Latitude - lat) * 110540;
+      const d = Math.round(Math.hypot(dx, dy));
+      if (d <= distanceM) out.push({ id: s.ID, name: s.Name, lat: s.Latitude, lon: s.Longitude, stopCode: String(s.ID), rtpiNumber: String(s.ID), distance: d });
+    }
+  }
+  return out.sort((a, b) => a.distance - b.distance);
+}
+
 export function trace(routeId) {
   const route = ROUTES.find((r) => String(r.ID) === String(routeId));
   if (!route) return null;
