@@ -336,7 +336,11 @@ export default function MapView() {
   let statusText = 'Connecting…';
   if (routesState.error && !routes.length) statusText = 'Offline';
   else if (vehiclesState.error) statusText = 'Bus feed error';
-  else if (vehiclesState.updatedAt) statusText = `${vehicles.length} bus${vehicles.length === 1 ? '' : 'es'} · ${timeAgo(vehiclesState.updatedAt, now)}`;
+  else if (vehiclesState.updatedAt) {
+    statusText = vehicles.length
+      ? `${vehicles.length} bus${vehicles.length === 1 ? '' : 'es'} · ${timeAgo(vehiclesState.updatedAt, now)}`
+      : `No buses tracking · ${timeAgo(vehiclesState.updatedAt, now)}`;
+  }
 
   const toggleRoute = (id) =>
     setHiddenRouteIds(() => {
@@ -570,12 +574,27 @@ function updateVehicleMarker(entry, vehicle, route) {
   entry.marker.setLngLat([vehicle.lng, vehicle.lat]);
   entry.el.style.setProperty('--vehicle', route?.color || '#38bdf8');
   entry.el.classList.toggle('vehicle--noheading', heading === null);
+  entry.el.classList.toggle('vehicle--stale', Boolean(vehicle.isStale));
   entry.arrow.style.transform = heading === null ? '' : `rotate(${heading}deg)`;
   entry.label.textContent = route?.shortLabel ?? route?.shortName ?? String(vehicle.routeId ?? '');
   const level = crowdLevel(vehicle.apcPercentage);
   entry.el.title = `${route?.name || `Route ${vehicle.routeId}`} · Bus ${vehicle.name}${
     level.key === 'unknown' ? '' : ` · ${level.label} (${Math.round(vehicle.apcPercentage)}%)`
   }`;
+}
+
+/** "as of 5:41:12 PM (8s ago)" or, for an old fix, "last seen Sep 1, 8:07 PM (4 days ago)". */
+function describeFix(iso) {
+  if (!iso) return 'No GPS time reported';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const ageS = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  const ago = ageS < 60 ? `${ageS}s ago` : ageS < 3600 ? `${Math.round(ageS / 60)} min ago` : ageS < 86400 ? `${Math.round(ageS / 3600)} h ago` : `${Math.round(ageS / 86400)} days ago`;
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const when = sameDay
+    ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `${ageS > 120 ? 'last seen' : 'as of'} ${when} (${ago})`;
 }
 
 /** Popup built with DOM APIs so upstream strings are never parsed as HTML. */
@@ -594,9 +613,7 @@ function showVehiclePopup(map, popupRef, entry) {
   line2.className = `vpopup__crowd vpopup__crowd--${level.key}`;
   line2.textContent = level.key === 'unknown' ? 'No load data' : `${level.label} · ${Math.round(v.apcPercentage)}% full`;
   const line3 = document.createElement('small');
-  line3.textContent = v.lastUpdated
-    ? `GPS ${new Date(v.lastUpdated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`
-    : '';
+  line3.textContent = describeFix(v.lastUpdated);
   root.append(title, line1, line2, line3);
 
   if (!popupRef.current) {
