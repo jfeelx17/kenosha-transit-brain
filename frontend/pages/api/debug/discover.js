@@ -99,6 +99,41 @@ function collectSnippets(source, text, into, context = 220) {
   }
 }
 
+/**
+ * React Router (turbo-stream) hydration: window.__reactRouterContext.streamController.enqueue("...").
+ * The argument is a JS string literal whose escapes are JSON-compatible, so JSON.parse recovers it.
+ * Returns the decoded payload (capped) plus any key/token-looking pairs and route names it contains.
+ */
+function decodeHydration(inlineScripts) {
+  const chunks = [];
+  const re = /streamController\.enqueue\((".*?")\);?/gs;
+  for (const script of inlineScripts) {
+    let m;
+    while ((m = re.exec(script))) {
+      try {
+        chunks.push(JSON.parse(m[1]));
+      } catch {
+        chunks.push(m[1]);
+      }
+    }
+  }
+  const text = chunks.join('\n');
+  const secrets = [];
+  const secretRe = /"([A-Za-z_]*(?:[Kk]ey|[Tt]oken|[Ss]ecret|[Aa]pi[A-Za-z_]*|[Cc]ustomer[A-Za-z_]*|[Pp]ortal[A-Za-z_]*))",\s*("[^"]{1,200}"|-?\d+)/g;
+  let m;
+  while ((m = secretRe.exec(text)) && secrets.length < 60) secrets.push(`${m[1]} -> ${m[2]}`);
+  const labels = [];
+  const labelRe = /"(name|shortName|longName|label|title|id|routeId|color|displayName)",\s*("[^"]{1,80}"|-?\d+)/g;
+  while ((m = labelRe.exec(text)) && labels.length < 120) labels.push(`${m[1]}=${m[2]}`);
+  return {
+    chunks: chunks.length,
+    bytes: text.length,
+    keyLikePairs: secrets,
+    labelPairs: labels,
+    decodedPreview: text.slice(0, 12000),
+  };
+}
+
 function extractInlineScripts(html) {
   const out = [];
   const re = /<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gi;
@@ -154,6 +189,7 @@ export default async function handler(req, res) {
   const started = Date.now();
   const found = { urls: new Set(), paths: new Set(), config: new Set(), envKeys: new Set() };
   const snippets = [];
+  const smallModules = {};
   const report = { baseUrl: BASE_URL, portalApi: PORTAL_API, portalId: PORTAL_ID, shell: null, assets: [], inlineScripts: 0, notes: [] };
 
   try {
@@ -165,6 +201,7 @@ export default async function handler(req, res) {
     for (const s of inline) extractFromText(s, found);
     extractFromText(shell.text, found);
     collectSnippets('/', shell.text, snippets);
+    report.hydration = decodeHydration(inline);
 
     const queue = extractAssets(shell.text).filter((u) => u.startsWith('/') || u.startsWith(BASE_URL));
     const seen = new Set();
@@ -180,6 +217,9 @@ export default async function handler(req, res) {
           const text = r.text.slice(0, MAX_ASSET_BYTES);
           extractFromText(text, found);
           collectSnippets(path, text, snippets);
+          if (text.length <= 16 * 1024 && /Context|Service|Store|Endpoint|api|config|env/i.test(path)) {
+            smallModules[path] = text;
+          }
           const importRe = /["'](\.\/|\/assets\/)([A-Za-z0-9_.-]+\.m?js)["']/g;
           let m;
           while ((m = importRe.exec(text))) {
@@ -215,6 +255,7 @@ export default async function handler(req, res) {
     configHints: [...found.config].filter((c) => !/^base = |^textBaseline|maptiler|rtlPlugin|telemetry|terrain/i.test(c)).sort().slice(0, 200),
     envKeys: [...found.envKeys].sort(),
     codeSnippets: snippets.slice(0, 60),
+    smallModules,
     apiLookingPaths: [...found.paths].filter((p) => !/^\.\/|^\/assets\//.test(p)).sort().slice(0, 400),
   });
 }

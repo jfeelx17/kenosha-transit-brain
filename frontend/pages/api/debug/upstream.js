@@ -1,6 +1,7 @@
 // GET /api/debug/upstream?path=/Region/0/Routes
 // GET /api/debug/upstream?url=https://api.syncromatics.com/portal/...   (syncromatics hosts only)
 // Add &grep=<regex>&context=300&max=40 to list every match in the body with surrounding text.
+// Add &full=1 to return the whole body (up to 300 KB).
 //
 // Shows exactly what a transit endpoint answers: status, content type, server
 // headers and the first part of the body, both raw and as readable text.
@@ -36,6 +37,7 @@ export default async function handler(req, res) {
   const grep = typeof req.query.grep === 'string' && req.query.grep ? req.query.grep : null;
   const context = Math.min(2000, Math.max(20, Number(req.query.context) || 300));
   const maxMatches = Math.min(200, Math.max(1, Number(req.query.max) || 40));
+  const full = req.query.full === '1' || req.query.full === 'true';
 
   try {
     const r = await probeUpstream(target.path ?? target.url, { raw: Boolean(grep) || /\.m?js(\?|$)/.test(target.path || target.url) });
@@ -88,6 +90,8 @@ export default async function handler(req, res) {
       matches,
       textPreview: grep ? undefined : readableSnippet(r.text, 600),
       rawPreview: grep ? undefined : r.text.slice(0, 1500),
+      body: full ? r.text.slice(0, 300 * 1024) : undefined,
+      bodyTruncated: full ? r.text.length > 300 * 1024 : undefined,
     });
   } catch (err) {
     return sendError(res, err);
