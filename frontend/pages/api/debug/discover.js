@@ -2,37 +2,50 @@
 //
 // Finds where kenoshatransit.com's front-end gets its data. Downloads the
 // site's HTML shell and its JavaScript bundles, pulls out every URL and
-// API-looking string, and probes a handful of likely endpoints. Open it in a
-// browser tab and paste the JSON back when the map cannot load routes.
+// API-looking string, quotes the code around the URL-building spots, and
+// probes likely endpoints on the site and on api.syncromatics.com.
+// Open it in a browser tab and paste the JSON back when the map cannot load.
 import { BASE_URL, probeUpstream, readableSnippet, sendError, sendJson } from '../../../lib/transit';
 
 const MAX_ASSETS = 60;
 const MAX_ASSET_BYTES = 3 * 1024 * 1024;
 const TIME_BUDGET_MS = 40000;
 const CONCURRENCY = 4;
+const PORTAL_ID = process.env.TRANSIT_PORTAL_ID || '170';
+const PORTAL_API = process.env.TRANSIT_PORTAL_API || 'https://api.syncromatics.com/portal';
 
-const NOISE = /w3\.org|reactjs\.org|react\.dev|github\.com|fonts\.g|googletagmanager|google-analytics|schema\.org|mozilla\.org|npmjs|jsdelivr|unpkg|sentry\.io|localhost|example\.com|apple\.com|openstreetmap|maptiler|mapbox|carto|w3c|creativecommons|json-schema|purl\.org|xmlns|typescriptlang|nodejs\.org|unicode\.org|iana\.org|whatwg|khronos|opengl|microsoft\.com|chromium|webkit|adobe|googleapis\.com\/css/i;
-const INTERESTING = /api|vehicle|arrival|prediction|predict|stop|route|region|realtime|real-time|gtfs|graphql|socket|signalr|hub|track|syncromatics|gmv|agency|customer|trip|eta|alert|json|endpoint|baseurl|base_url|host/i;
+const NOISE = /w3\.org|reactjs\.org|react\.dev|reactrouter\.com|github\.com|fonts\.g|googletagmanager|google-analytics|google\.com\/maps|schema\.org|mozilla\.org|npmjs|jsdelivr|unpkg|sentry\.io|localhost|example\.com|apple\.com|openstreetmap|maptiler|maplibre|mapbox|carto|w3c|creativecommons|json-schema|purl\.org|xmlns|typescriptlang|nodejs\.org|unicode\.org|iana\.org|whatwg|khronos|opengl|microsoft\.com|chromium|webkit|adobe|googleapis\.com\/css/i;
+const INTERESTING = /api|vehicle|arrival|prediction|predict|stop|route|region|realtime|real-time|gtfs|graphql|socket|signalr|hub|track|syncromatics|gmv|agency|customer|portal|trip|eta|alert|json|endpoint|baseurl|base_url|host/i;
 
-const PROBES = [
-  '/Region/0/Routes',
-  '/Regions',
-  '/Route/1/Vehicles',
-  '/Stop/1/Arrivals',
-  '/api/routes',
-  '/api/Routes',
-  '/api/v1/routes',
-  '/api/Region/0/Routes',
-  '/api/Route/1/Vehicles',
-  '/api/Stop/1/Arrivals',
-  '/routes',
-  '/routes.json',
-  '/api/vehicles',
-  '/api/config',
-  '/api/environment',
-  '/env',
-  '/config.json',
-  '/robots.txt',
+// Code excerpts worth reading: how the app builds its API URLs.
+const SNIPPET_PATTERNS = [
+  { name: 'apiBaseUrl', re: /apiBaseUrl/g, max: 8 },
+  { name: 'vehicles-url', re: /\/vehicles`/g, max: 4 },
+  { name: 'arrivals-url', re: /\/arrivals`/g, max: 4 },
+  { name: 'routes-list', re: /["'`]routes["'`]|`routes`|\/routes["'`]/g, max: 6 },
+  { name: 'ip-json', re: /ip\.json/g, max: 3 },
+  { name: 'customer-or-portal-id', re: /customerId|customer_id|portalId|portal_id|agencyId|tenantId|x-customer|x-portal|x-api-key|apiKey|api_key/gi, max: 10 },
+  { name: 'fetch-with-base', re: /fetch\(`\$\{[a-zA-Z_.]+\}\//g, max: 6 },
+];
+
+const SITE_PROBES = ['/Region/0/Routes', '/Route/1/Vehicles', '/Stop/1/Arrivals', '/api/routes', '/robots.txt'];
+
+const PORTAL_PROBES = [
+  `${PORTAL_API}/${PORTAL_ID}/routes`,
+  `${PORTAL_API}/customers/${PORTAL_ID}/routes`,
+  `${PORTAL_API}/customer/${PORTAL_ID}/routes`,
+  `${PORTAL_API}/portals/${PORTAL_ID}/routes`,
+  `${PORTAL_API}/agencies/${PORTAL_ID}/routes`,
+  `${PORTAL_API}/routes?customerId=${PORTAL_ID}`,
+  `${PORTAL_API}/routes?customer=${PORTAL_ID}`,
+  `${PORTAL_API}/routes?portalId=${PORTAL_ID}`,
+  `${PORTAL_API}/routes`,
+  `${PORTAL_API}/geolocation/ip.json`,
+  `${PORTAL_API}/${PORTAL_ID}/geolocation/ip.json`,
+  `${PORTAL_API}/customers?host=${new URL(BASE_URL).host}`,
+  `${PORTAL_API}/customers/${new URL(BASE_URL).host}`,
+  `${PORTAL_API}/${PORTAL_ID}`,
+  `${PORTAL_API}/customers/${PORTAL_ID}`,
 ];
 
 function unique(list) {
@@ -55,19 +68,35 @@ function extractFromText(text, into) {
   const wsRe = /wss?:\/\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]{4,200}/g;
   while ((m = wsRe.exec(text))) into.urls.add(m[0]);
 
-  // Quoted strings and template fragments that look like API paths or config.
-  const strRe = /["'`]((?:\/|\.\/)?[A-Za-z0-9_./${}:-]{3,140})["'`]/g;
+  const strRe = /["'`]((?:\/|\.\/)?[A-Za-z0-9_./${}:?=&-]{3,140})["'`]/g;
   while ((m = strRe.exec(text))) {
     const s = m[1];
-    if (INTERESTING.test(s) && /[\/${]/.test(s)) into.paths.add(s);
+    if (INTERESTING.test(s) && /[/${?]/.test(s)) into.paths.add(s);
   }
 
-  // key: "value" config pairs mentioning api/base urls
-  const cfgRe = /([A-Za-z_]*(?:api|API|Api|base|BASE|Base|host|HOST|url|URL|Url|endpoint|ENDPOINT)[A-Za-z_]*)\s*[:=]\s*["'`]([^"'`]{3,200})["'`]/g;
+  const cfgRe = /([A-Za-z_]*(?:api|API|Api|base|BASE|Base|host|HOST|url|URL|Url|endpoint|ENDPOINT|customer|Customer|portal|Portal)[A-Za-z_]*)\s*[:=]\s*["'`]([^"'`]{1,200})["'`]/g;
   while ((m = cfgRe.exec(text))) into.config.add(`${m[1]} = ${m[2]}`);
+
+  const numCfgRe = /((?:customer|portal|agency|tenant)[A-Za-z_]*)\s*[:=]\s*(\d{1,6})\b/gi;
+  while ((m = numCfgRe.exec(text))) into.config.add(`${m[1]} = ${m[2]}`);
 
   const viteRe = /import\.meta\.env\.([A-Z0-9_]+)|process\.env\.([A-Z0-9_]+)|window\.ENV\.([A-Za-z0-9_]+)|ENV\.([A-Z][A-Z0-9_]+)/g;
   while ((m = viteRe.exec(text))) into.envKeys.add(m[1] || m[2] || m[3] || m[4]);
+}
+
+function collectSnippets(source, text, into, context = 220) {
+  for (const p of SNIPPET_PATTERNS) {
+    const re = new RegExp(p.re.source, p.re.flags);
+    let m;
+    let n = 0;
+    while ((m = re.exec(text)) && n < p.max) {
+      const start = Math.max(0, m.index - context);
+      const end = Math.min(text.length, m.index + m[0].length + context);
+      into.push({ source, pattern: p.name, at: m.index, code: text.slice(start, end) });
+      n++;
+      if (m[0].length === 0) re.lastIndex++;
+    }
+  }
 }
 
 function extractInlineScripts(html) {
@@ -92,19 +121,50 @@ async function mapLimit(items, limit, fn) {
   return results;
 }
 
+async function probe(target, headers) {
+  try {
+    const r = await probeUpstream(target, { headers });
+    let json = null;
+    try {
+      json = JSON.parse(r.text);
+    } catch {
+      json = null;
+    }
+    const summary =
+      json === null
+        ? undefined
+        : Array.isArray(json)
+          ? { type: 'array', length: json.length, firstKeys: json[0] && typeof json[0] === 'object' ? Object.keys(json[0]).slice(0, 25) : undefined }
+          : { type: typeof json, keys: typeof json === 'object' && json ? Object.keys(json).slice(0, 25) : undefined };
+    return {
+      target,
+      status: r.status,
+      contentType: r.contentType.split(';')[0],
+      isJson: json !== null,
+      jsonSummary: summary,
+      preview: json !== null ? r.text.slice(0, 500) : readableSnippet(r.text, 120),
+    };
+  } catch (err) {
+    return { target, error: err.message };
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return sendError(res, new Error('GET only'), 405);
   const started = Date.now();
   const found = { urls: new Set(), paths: new Set(), config: new Set(), envKeys: new Set() };
-  const report = { baseUrl: BASE_URL, shell: null, assets: [], inlineScripts: 0, probes: [], notes: [] };
+  const snippets = [];
+  const report = { baseUrl: BASE_URL, portalApi: PORTAL_API, portalId: PORTAL_ID, shell: null, assets: [], inlineScripts: 0, notes: [] };
 
   try {
     const shell = await probeUpstream('/', { raw: true });
     report.shell = { status: shell.status, contentType: shell.contentType, textPreview: readableSnippet(shell.text, 200) };
     const inline = extractInlineScripts(shell.text);
     report.inlineScripts = inline.length;
+    report.inlineScriptPreviews = inline.map((s) => s.replace(/\s+/g, ' ').slice(0, 400));
     for (const s of inline) extractFromText(s, found);
     extractFromText(shell.text, found);
+    collectSnippets('/', shell.text, snippets);
 
     const queue = extractAssets(shell.text).filter((u) => u.startsWith('/') || u.startsWith(BASE_URL));
     const seen = new Set();
@@ -119,14 +179,14 @@ export default async function handler(req, res) {
           const r = await probeUpstream(path, { raw: true });
           const text = r.text.slice(0, MAX_ASSET_BYTES);
           extractFromText(text, found);
-          // Vite chunks import siblings; follow one level.
+          collectSnippets(path, text, snippets);
           const importRe = /["'](\.\/|\/assets\/)([A-Za-z0-9_.-]+\.m?js)["']/g;
           let m;
           while ((m = importRe.exec(text))) {
             const next = `/assets/${m[2]}`;
             if (!seen.has(next) && !queue.includes(next)) queue.push(next);
           }
-          return { path, status: r.status, bytes: r.text.length, contentType: r.contentType.split(';')[0] };
+          return { path, status: r.status, bytes: r.text.length };
         } catch (err) {
           return { path, error: err.message };
         }
@@ -136,22 +196,9 @@ export default async function handler(req, res) {
     report.assets = fetched;
     if (queue.length) report.notes.push(`${queue.length} more asset(s) not scanned (limit reached)`);
 
-    const probeResults = await mapLimit(PROBES, CONCURRENCY, async (path) => {
-      try {
-        const r = await probeUpstream(path);
-        let isJson = false;
-        try {
-          JSON.parse(r.text);
-          isJson = true;
-        } catch {
-          isJson = false;
-        }
-        return { path, status: r.status, contentType: r.contentType.split(';')[0], isJson, preview: readableSnippet(r.text, isJson ? 200 : 80) };
-      } catch (err) {
-        return { path, error: err.message };
-      }
-    });
-    report.probes = probeResults;
+    const siteHeaders = { Origin: BASE_URL, Referer: `${BASE_URL}/` };
+    report.siteProbes = await mapLimit(SITE_PROBES, CONCURRENCY, (p) => probe(p));
+    report.portalProbes = await mapLimit(PORTAL_PROBES, CONCURRENCY, (u) => probe(u, siteHeaders));
   } catch (err) {
     return sendError(res, err);
   }
@@ -159,15 +206,15 @@ export default async function handler(req, res) {
   const siteHost = new URL(BASE_URL).host;
   const urls = [...found.urls];
   const likelyApi = urls.filter((u) => !NOISE.test(u) && (!u.includes(siteHost) || INTERESTING.test(u)));
-  const other = urls.filter((u) => !likelyApi.includes(u) && !NOISE.test(u));
 
   return sendJson(res, 200, {
     ...report,
     elapsedMs: Date.now() - started,
+    workingPortalProbes: (report.portalProbes || []).filter((p) => p.isJson).map((p) => p.target),
     likelyApiUrls: likelyApi.sort(),
-    configHints: [...found.config].sort().slice(0, 200),
+    configHints: [...found.config].filter((c) => !/^base = |^textBaseline|maptiler|rtlPlugin|telemetry|terrain/i.test(c)).sort().slice(0, 200),
     envKeys: [...found.envKeys].sort(),
-    apiLookingPaths: [...found.paths].sort().slice(0, 400),
-    otherUrls: other.sort().slice(0, 100),
+    codeSnippets: snippets.slice(0, 60),
+    apiLookingPaths: [...found.paths].filter((p) => !/^\.\/|^\/assets\//.test(p)).sort().slice(0, 400),
   });
 }

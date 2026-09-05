@@ -59,13 +59,18 @@ function upstreamHeaders(raw) {
  * Low-level GET. Resolves with status, headers and body text; only network-level
  * failures reject. Used by fetchUpstream() and by /api/debug/upstream.
  */
-export async function probeUpstream(path, { raw = false } = {}) {
-  const url = `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+export async function probeUpstream(path, { raw = false, headers = {} } = {}) {
+  const url = /^https?:\/\//i.test(path) ? path : `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const startedAt = Date.now();
   try {
-    const res = await fetch(url, { headers: upstreamHeaders(raw), cache: 'no-store', redirect: 'follow', signal: controller.signal });
+    const res = await fetch(url, {
+      headers: { ...upstreamHeaders(raw), ...headers },
+      cache: 'no-store',
+      redirect: 'follow',
+      signal: controller.signal,
+    });
     const text = await res.text();
     return {
       url,
