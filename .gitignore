@@ -31,3 +31,9 @@ data/*.zip
 # OS
 .DS_Store
 Thumbs.db
+
+# Node / Next.js (frontend/)
+node_modules/
+.next/
+frontend/.env.local
+frontend/.env.*.local

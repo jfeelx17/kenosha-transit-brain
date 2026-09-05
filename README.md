@@ -22,6 +22,36 @@ A comprehensive, queryable knowledge base for Kenosha Transit that replaces hund
    - Directory: https://gtfs-directory.syncromatics.com/
    - Provides: Real-time vehicle positions and trip updates
 
+## Kenosha Loop (the app)
+
+`frontend/` holds **Kenosha Loop**, a private one-user progressive web app: a dark MapLibre map
+of Kenosha with live bus positions, a **Next Bus** bottom sheet showing minutes until each bus
+reaches a tapped stop, and a **Crowd Meter** built from each bus's passenger-load percentage.
+
+```
+Browser (Next.js app)  ──/api/vehicles/[routeId]──▶  Next.js API route  ──Chrome UA──▶  kenoshatransit.com/api/rtpi?path=routes/{id}/vehicles
+                       ──/api/arrivals/[stopId]───▶  (same-origin, no CORS)          ▶  kenoshatransit.com/api/rtpi?path=stops/{id}/arrivals
+                       ──/api/routes──────────────▶                                  ▶  kenoshatransit.com/ (route list in page data)
+Upload UI (Flask :5000) ── drag & drop PDFs / GTFS ──▶ uploads/ ──▶ scripts/process_uploads.py ──▶ docs/knowledge_base.json
+```
+
+<p>
+  <img src="docs/screenshots/next-bus-sheet.png" alt="Next Bus sheet with crowd meters" width="260">
+  <img src="docs/screenshots/map-vehicle-popup.png" alt="Live map with vehicle popup" width="260">
+</p>
+
+(Screenshots use the built-in mock data, `./scripts/dev.sh --mock`.)
+
+Progress and known limits are tracked in [docs/MILESTONES.md](docs/MILESTONES.md).
+
+Run everything with one command (see [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md) for setup):
+
+```bash
+./scripts/dev.sh          # live data
+./scripts/dev.sh --mock   # fake buses, works offline
+./scripts/dev.sh --prod   # production build, installable as an app
+```
+
 ## Structure
 
 - `uploads/` - **Manual file uploads** (place source files here)
@@ -33,6 +63,8 @@ A comprehensive, queryable knowledge base for Kenosha Transit that replaces hund
 - `docs/` - Extracted documentation and knowledge base
 - `scripts/` - Data fetching and processing scripts
 - `query/` - Query interface and search tools
+- `frontend/` - Kenosha Loop Next.js + MapLibre PWA (live map, Next Bus sheet, Crowd Meter)
+- `templates/`, `static/` - Flask upload UI (every response is JSON, including errors)
 
 ## Quick Start
 
