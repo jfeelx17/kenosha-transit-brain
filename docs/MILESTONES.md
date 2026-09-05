@@ -44,7 +44,27 @@ passenger load, real arrival predictions.
 1 = 6037, 2 = 6038, 3 = 6039, 4 = 6040, 5 = 6041, 31 = 6042, 35 = 6043,
 Amazon Express = 6044, Streetcar = 6075, Lakefront Trolley = 6108, school trippers 6223–6233.
 
-## Next
-Set with the owner after v0.1 (see the conversation record / PR #1 for candidates:
-permanent free URL for daily phone use; nearby stops and favourites; service alerts;
-schedule/GTFS parsing in the hub; automated build-and-test on every push).
+## v0.2 — Loop in your pocket (in progress)
+
+**Strategic goal:** Kenosha Loop usable every day from a phone, at $0, without a laptop
+running: a permanent private URL, and the two things a rider actually does at a bus stop
+(find the nearest stops, check the stops they always use).
+
+### Scope
+- Private deployment: access-key gate (`frontend/proxy.js`) so a Vercel Hobby URL is
+  effectively private; `docs/DEPLOY_VERCEL.md` with the Git-integration and CLI paths.
+- **Near me**: locate the rider, list the nearest stops with distance and the next bus at each,
+  tap through to the Next Bus sheet.
+- **Saved stops**: star a stop; a Saved list with live next-bus times; kept per device.
+- Route chips, bus markers and the Next Bus sheet from v0.1 unchanged.
+
+### Done when
+- The owner opens the app from the phone's home screen on a non-home network and sees live
+  buses, nearby stops and saved stops within a few seconds.
+
+## Later (candidates)
+- Service alerts from the feed (Labor Day, stop relocations) inside the app.
+- Schedule/GTFS parsing in the data hub so the app can show timetable times when no bus is
+  tracked, and answer questions like "last Route 2 tonight".
+- Automated build-and-test on every push, plus a scheduled upstream-shape check that alerts
+  when kenoshatransit.com changes.

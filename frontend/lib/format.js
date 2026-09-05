@@ -35,3 +35,11 @@ export function crowdLevel(percentage) {
   if (percentage <= 75) return { key: 'mid', label: 'Filling up' };
   return { key: 'high', label: 'Crowded' };
 }
+
+/** Metres -> "350 ft" | "0.4 mi" (US units; Kenosha riders think in miles). */
+export function formatDistance(meters) {
+  if (meters === null || meters === undefined || !Number.isFinite(meters)) return '';
+  const feet = meters * 3.28084;
+  if (feet < 1000) return `${Math.round(feet / 10) * 10} ft`;
+  return `${(feet / 5280).toFixed(1)} mi`;
+}

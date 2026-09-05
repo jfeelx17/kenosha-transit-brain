@@ -21,6 +21,7 @@
 // and /Stop/{id}/Arrivals; those remain as a fallback (TRANSIT_API_STYLE=track).
 
 import * as mock from './mock';
+import { distanceMeters } from './geo';
 
 export const BASE_URL = (process.env.TRANSIT_BASE_URL || 'https://www.kenoshatransit.com').replace(/\/+$/, '');
 const CUSTOMER_ID = process.env.TRANSIT_CUSTOMER_ID || '';
@@ -669,6 +670,38 @@ export async function getArrivals(stopId, routeId = null) {
   const query = CUSTOMER_ID ? `?customerId=${encodeURIComponent(CUSTOMER_ID)}` : '';
   const raw = await fetchUpstream(`/Stop/${encodeURIComponent(stopId)}/Arrivals${query}`);
   return normalizeArrivals(raw, stopId);
+}
+
+function normalizeNearbyStop(s) {
+  const base = normalizeStop(s, null);
+  return { ...base, distanceMeters: num(pick(s, 'distance', 'distanceMeters', 'Distance')) };
+}
+
+/** Nearest stops to a point, soonest-first by distance. */
+export async function getNearbyStops({ lat, lon, distance = 1500, limit = 8 }) {
+  const here = { lat, lng: lon };
+  const finish = (list) => {
+    const seen = new Set();
+    return list
+      .filter(validStop)
+      .map((s) => ({ ...s, distanceMeters: s.distanceMeters ?? Math.round(distanceMeters(here, { lat: s.lat, lng: s.lng })) }))
+      .filter((s) => s.distanceMeters <= distance)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
+      .filter((s) => (seen.has(String(s.id)) ? false : seen.add(String(s.id))))
+      .slice(0, limit);
+  };
+
+  if (isMock()) return finish(mock.nearby(lat, lon, distance).map(normalizeNearbyStop));
+
+  if (!routesCache.routes && API_STYLE === 'auto') await getRoutes().catch(() => {});
+  if (apiStyle() === 'portal') {
+    const q = new URLSearchParams({ lat: String(lat), lon: String(lon), distance: String(distance) });
+    const raw = await fetchPortal(`stops/search?${q.toString()}`);
+    return finish(unwrapList(raw).map(normalizeNearbyStop));
+  }
+  // Classic Track has no search endpoint: rank the stops we already know.
+  const routes = await getRoutes();
+  return finish(routes.flatMap((r) => r.stops));
 }
 
 /** GeoJSON Feature (MultiLineString) for a route, or null when no shape exists. */

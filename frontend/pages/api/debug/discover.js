@@ -7,6 +7,9 @@
 // Open it in a browser tab and paste the JSON back when the map cannot load.
 import { BASE_URL, probeUpstream, readableSnippet, routesFromHydration, rtpiPath, sendError, sendJson, unwrapList } from '../../../lib/transit';
 
+// Serverless hosts (Vercel) default to 10 s per function; this one downloads a few MB.
+export const config = { maxDuration: 60 };
+
 const MAX_ASSETS = 60;
 const MAX_ASSET_BYTES = 3 * 1024 * 1024;
 const TIME_BUDGET_MS = 40000;
