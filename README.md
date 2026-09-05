@@ -42,6 +42,8 @@ Upload UI (Flask :5000) ── drag & drop PDFs / GTFS ──▶ uploads/ ──
 
 (Screenshots use the built-in mock data, `./scripts/dev.sh --mock`.)
 
+Progress and known limits are tracked in [docs/MILESTONES.md](docs/MILESTONES.md).
+
 Run everything with one command (see [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md) for setup):
 
 ```bash
