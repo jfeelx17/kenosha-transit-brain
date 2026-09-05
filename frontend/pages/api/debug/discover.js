@@ -251,6 +251,19 @@ export default async function handler(req, res) {
     };
     await sample('routes', 'routes');
     await sample('vehicles', `routes/${firstRouteId}/vehicles`);
+    // Buses are not on every route; find the first route that has one right now.
+    for (const r of hydrationRoutes.slice(0, 25)) {
+      try {
+        const list = unwrapList(JSON.parse((await probeUpstream(rtpiPath(`routes/${r.id}/vehicles`))).text));
+        if (list.length) {
+          rtpiSamples.vehiclesAnyRoute = { routeId: r.id, routeName: r.name, count: list.length, first: list[0] };
+          break;
+        }
+      } catch {
+        // keep looking
+      }
+    }
+    if (!rtpiSamples.vehiclesAnyRoute) rtpiSamples.vehiclesAnyRoute = { note: 'no route had a bus at this moment' };
     const stops = await sample('stops', `routes/${firstRouteId}/stops`);
     await sample('patterns', `routes/${firstRouteId}/patterns`);
     let firstStopId = null;

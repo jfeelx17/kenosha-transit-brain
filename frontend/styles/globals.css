@@ -50,6 +50,7 @@ button { font: inherit; }
 .status { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .badge { font-size: 10px; font-weight: 800; letter-spacing: 0.6px; padding: 2px 6px; border-radius: 6px; }
 .badge--mock { background: var(--warn); color: #1a1200; }
+.badge--sched { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); font-weight: 600; letter-spacing: 0; text-transform: none; }
 
 /* ---------- route chips ---------- */
 .chips {

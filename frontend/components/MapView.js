@@ -25,7 +25,8 @@ export default function MapView() {
 
   const [mapReady, setMapReady] = useState(false);
   const [basemapFallback, setBasemapFallback] = useState(false);
-  const [hiddenRouteIds, setHiddenRouteIds] = useState(() => new Set());
+  // null until routes arrive; then school routes start hidden (they only run on school days).
+  const [hiddenState, setHiddenRouteIds] = useState(null);
   const [selectedStop, setSelectedStop] = useState(null);
   const now = useNow(1000);
 
@@ -34,6 +35,10 @@ export default function MapView() {
   const routes = routesState.data?.routes ?? [];
   const isMock = Boolean(routesState.data?.mock);
   const routesById = useMemo(() => new Map(routes.map((r) => [String(r.id), r])), [routes]);
+  const hiddenRouteIds = useMemo(
+    () => hiddenState ?? new Set(routes.filter((r) => r.isSchool).map((r) => String(r.id))),
+    [hiddenState, routes]
+  );
   const visibleRoutes = useMemo(
     () => routes.filter((r) => !hiddenRouteIds.has(String(r.id))),
     [routes, hiddenRouteIds]
@@ -241,10 +246,16 @@ export default function MapView() {
   else if (vehiclesState.updatedAt) statusText = `${vehicles.length} bus${vehicles.length === 1 ? '' : 'es'} · ${timeAgo(vehiclesState.updatedAt, now)}`;
 
   const toggleRoute = (id) =>
-    setHiddenRouteIds((prev) => {
-      const next = new Set(prev);
+    setHiddenRouteIds(() => {
+      const next = new Set(hiddenRouteIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  const toggleMany = (ids, currentlyOn) =>
+    setHiddenRouteIds(() => {
+      const next = new Set(hiddenRouteIds);
+      ids.forEach((id) => (currentlyOn ? next.add(id) : next.delete(id)));
       return next;
     });
 
@@ -263,7 +274,13 @@ export default function MapView() {
         </div>
       </header>
 
-      <RouteChips routes={routes} hidden={hiddenRouteIds} onToggle={toggleRoute} onShowAll={() => setHiddenRouteIds(new Set())} />
+      <RouteChips
+        routes={routes}
+        hidden={hiddenRouteIds}
+        onToggle={toggleRoute}
+        onToggleMany={toggleMany}
+        onShowAll={() => setHiddenRouteIds(new Set())}
+      />
 
       {routesState.error && !routes.length && (
         <div className="banner banner--error" role="alert">
@@ -396,7 +413,7 @@ function updateVehicleMarker(entry, vehicle, route) {
   entry.el.style.setProperty('--vehicle', route?.color || '#38bdf8');
   entry.el.classList.toggle('vehicle--noheading', vehicle.heading === null);
   entry.arrow.style.transform = vehicle.heading === null ? '' : `rotate(${vehicle.heading}deg)`;
-  entry.label.textContent = route?.shortName ?? String(vehicle.routeId ?? '');
+  entry.label.textContent = route?.shortLabel ?? route?.shortName ?? String(vehicle.routeId ?? '');
   const level = crowdLevel(vehicle.apcPercentage);
   entry.el.title = `${route?.name || `Route ${vehicle.routeId}`} · Bus ${vehicle.name}${
     level.key === 'unknown' ? '' : ` · ${level.label} (${Math.round(vehicle.apcPercentage)}%)`

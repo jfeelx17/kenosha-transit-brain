@@ -95,8 +95,8 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose }
           <h2>{stop.name}</h2>
           <div className="sheet__routes">
             {stopRoutes.map((r) => (
-              <span key={r.id} className="route-badge route-badge--sm" style={{ background: r.color, color: r.textColor }}>
-                {r.shortName}
+              <span key={r.id} className="route-badge route-badge--sm" style={{ background: r.color, color: r.textColor }} title={r.name}>
+                {r.shortLabel || r.shortName}
               </span>
             ))}
             <span className="sheet__stopid">Stop {stop.id}</span>
@@ -134,20 +134,31 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose }
               const due = remaining <= 60;
               return (
                 <li key={`${a.routeId}-${a.vehicleId}-${a.predictedAt}-${i}`} className={`arrival ${due ? 'arrival--due' : ''}`}>
-                  <span className="route-badge" style={{ background: color, color: route?.textColor || '#fff' }}>
-                    {route?.shortName ?? a.routeId ?? '?'}
+                  <span className="route-badge" style={{ background: color, color: route?.textColor || '#fff' }} title={route?.name}>
+                    {route?.shortLabel ?? route?.shortName ?? a.routeShortName ?? a.routeId ?? '?'}
                   </span>
                   <div className="arrival__main">
                     <div className="arrival__eta">
                       <strong>{formatEta(remaining)}</strong>
                       {a.predictedAt && <span className="arrival__clock">{formatClock(a.predictedAt)}</span>}
+                      {a.isScheduled && (
+                        <span className="badge badge--sched" title="From the timetable; no tracked bus yet">
+                          scheduled
+                        </span>
+                      )}
                     </div>
                     <div className="arrival__sub">
                       {route?.name ?? a.routeName ?? 'Route'}
-                      {a.destination ? ` → ${a.destination}` : ''}
+                      {a.direction ? ` · ${a.direction}` : ''}
+                      {a.destination && a.destination !== a.direction ? ` → ${a.destination}` : ''}
                       {a.vehicleName ? ` · Bus ${a.vehicleName}` : ''}
                     </div>
-                    <CrowdMeter percentage={vehicle?.apcPercentage ?? null} onBoard={vehicle?.onBoard} capacity={vehicle?.capacity} />
+                    <CrowdMeter
+                      percentage={vehicle?.apcPercentage ?? null}
+                      onBoard={vehicle?.onBoard}
+                      capacity={vehicle?.capacity}
+                      fallbackLabel={a.isScheduled && !vehicle ? 'Scheduled trip, no bus assigned yet' : undefined}
+                    />
                   </div>
                 </li>
               );

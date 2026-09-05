@@ -4,7 +4,7 @@ import { crowdLevel } from '../lib/format';
  * Crowd Meter: passenger load from the bus's automatic passenger counter
  * (APCPercentage, 0-100). Renders a coloured bar plus a plain-language label.
  */
-export default function CrowdMeter({ percentage, onBoard, capacity }) {
+export default function CrowdMeter({ percentage, onBoard, capacity, fallbackLabel }) {
   const level = crowdLevel(percentage);
   const known = level.key !== 'unknown';
   const pct = known ? Math.max(0, Math.min(100, Math.round(percentage))) : 0;
@@ -27,7 +27,7 @@ export default function CrowdMeter({ percentage, onBoard, capacity }) {
         <div className="crowd__fill" style={{ width: `${pct}%` }} />
       </div>
       <span className="crowd__label">
-        {level.label}
+        {known ? level.label : fallbackLabel || level.label}
         {known ? ` · ${pct}%` : ''}
         {detail}
       </span>

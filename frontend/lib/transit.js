@@ -338,13 +338,30 @@ export function normalizeStop(raw, routeId) {
   };
 }
 
+/** "Mahone School Tripper" -> "MST"; short names stay as they are. */
+export function shortLabelFor(shortName) {
+  const s = String(shortName ?? '').trim();
+  if (s.length <= 5) return s;
+  const initials = s
+    .split(/[\s/-]+/)
+    .filter((w) => /^[A-Za-z0-9]/.test(w))
+    .map((w) => w[0].toUpperCase())
+    .join('');
+  return initials.slice(0, 4) || s.slice(0, 4);
+}
+
 export function normalizeRoute(r) {
   const id = pick(r, 'ID', 'Id', 'id', 'RouteId', 'RouteID');
   const stopsRaw = Array.isArray(r?.Stops) ? r.Stops : [];
+  const name = pick(r, 'Name', 'LongName', 'name', 'longName') ?? `Route ${id}`;
+  const shortName = String(pick(r, 'ShortName', 'Number', 'RouteNumber', 'shortName') ?? id);
   return {
     id,
-    name: pick(r, 'Name', 'LongName', 'name', 'longName') ?? `Route ${id}`,
-    shortName: String(pick(r, 'ShortName', 'Number', 'RouteNumber', 'shortName') ?? id),
+    name,
+    shortName,
+    shortLabel: shortLabelFor(shortName),
+    // School trippers only run on school days; hidden by default so they do not bury the network.
+    isSchool: /school|tripper/i.test(`${name} ${shortName}`),
     color: normalizeColor(pick(r, 'Color', 'RouteColor', 'color')),
     textColor: normalizeColor(pick(r, 'TextColor', 'textColor'), '#ffffff'),
     description: pick(r, 'description', 'Description') ?? null,
@@ -454,6 +471,8 @@ function normalizeArrival(a, group, stopId) {
     destination: pick(a, 'Destination', 'Headsign', 'headsign', 'destination') ?? (a?.pattern?.name && a.pattern.name !== 'Pattern' ? a.pattern.name : null),
     patternId: a?.pattern?.id ?? pick(a, 'PatternId', 'patternId') ?? null,
     isLastStop: Boolean(pick(a, 'IsLastStop', 'isLastStop')),
+    // true when the prediction comes from the timetable rather than a tracked bus
+    isScheduled: pick(a, 'schedulePrediction', 'isScheduled', 'scheduled', 'isSchedule') === true,
     deviationSeconds: num(pick(a, 'Deviation', 'deviation', 'deviationSeconds')),
   };
 }
@@ -600,7 +619,12 @@ export async function getRoutes({ force = false } = {}) {
     }
   }
 
-  routes.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0) || String(a.shortName).localeCompare(String(b.shortName)));
+  routes.sort(
+    (a, b) =>
+      Number(a.isSchool) - Number(b.isSchool) ||
+      (a.displayOrder ?? 0) - (b.displayOrder ?? 0) ||
+      String(a.shortName).localeCompare(String(b.shortName), undefined, { numeric: true })
+  );
 
   await Promise.allSettled(
     routes
