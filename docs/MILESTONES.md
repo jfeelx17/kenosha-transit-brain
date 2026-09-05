@@ -69,15 +69,16 @@ running: a permanent private URL, and the two things a rider actually does at a 
 - Follow-up carried into v0.3: the vehicle record's timestamp and load fields need confirming
   against a raw sample (the popup showed a GPS time that did not change between polls).
 
-## v0.3 — Trust the screen (proposed)
+## v0.3 — Trust the screen (in progress)
 
 **Strategic goal:** everything the app shows is either live and current, or clearly labelled
 as not. A rider should never wait for a bus that is actually parked.
 
 ### Scope
-- Confirm the vehicle record's timestamp and passenger-load fields from a raw sample; fix the
-  mapping; show "as of h:mm:ss" from the real GPS time.
-- Hide or grey out buses whose last GPS fix is older than a few minutes; say so in the popup.
+- Done 2026-09-05: vehicle record confirmed from a raw sample (`lastUpdated` ISO time,
+  `heading` as a compass letter plus `headingDegrees`, `passengerLoad` as a head count next to
+  `capacity`). Mapping fixed; buses with a fix older than 10 minutes are hidden, older than
+  2 minutes dimmed; popup shows "as of"/"last seen" with date and age.
 - Service alerts from the feed (the page data already carries them: Labor Day no-service,
   stop relocations, detours) shown in the app, with a one-line service status at the top.
 - Timetable fallback in the Next Bus sheet when a stop has no live prediction.

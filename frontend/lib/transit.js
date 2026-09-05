@@ -30,6 +30,9 @@ const API_STYLE = (process.env.TRANSIT_API_STYLE || 'auto').toLowerCase(); // au
 const RTPI_PATH = process.env.TRANSIT_RTPI_PATH || '/api/rtpi';
 const TIMEOUT_MS = Number(process.env.TRANSIT_TIMEOUT_MS) || 10000;
 const ROUTES_TTL_MS = Number(process.env.TRANSIT_ROUTES_TTL_MS) || 5 * 60 * 1000;
+// Parked buses keep reporting their last fix for days. Hide anything older than this.
+const STALE_HIDE_S = (Number(process.env.TRANSIT_STALE_VEHICLE_MIN) || 10) * 60;
+const STALE_WARN_S = 120;
 
 // The upstream site rejects "bot-looking" requests; present as a normal Chrome tab.
 const CHROME_UA =
@@ -387,6 +390,20 @@ const OCCUPANCY_WORDS = {
   HIGH: 85,
 };
 
+const COMPASS = {
+  N: 0, NNE: 22.5, NE: 45, ENE: 67.5, E: 90, ESE: 112.5, SE: 135, SSE: 157.5,
+  S: 180, SSW: 202.5, SW: 225, WSW: 247.5, W: 270, WNW: 292.5, NW: 315, NNW: 337.5,
+};
+
+/** "SW" | "225" | 225 -> degrees, else null. */
+function headingDegrees(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (Number.isFinite(n)) return ((n % 360) + 360) % 360;
+  const word = String(value).trim().toUpperCase();
+  return word in COMPASS ? COMPASS[word] : null;
+}
+
 /** Passenger load as 0-100 from a number, a "45%" string, or a GTFS-style occupancy word. */
 function loadPercent(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -398,45 +415,66 @@ function loadPercent(value) {
   return OCCUPANCY_WORDS[word] ?? null;
 }
 
-export function normalizeVehicle(v, fallbackRouteId = null) {
+export function normalizeVehicle(v, fallbackRouteId = null, nowMs = Date.now()) {
   const id = pick(v, 'ID', 'Id', 'id', 'VehicleId', 'VehicleID', 'vehicleId');
-  const onBoard = num(pick(v, 'OnBoard', 'Onboard', 'PassengerCount', 'passengerCount', 'passengers', 'onBoard'));
   const capacity = num(pick(v, 'Capacity', 'VehicleCapacity', 'capacity', 'maxCapacity', 'seatedCapacity'));
-  let apc = loadPercent(
-    pick(
-      v,
-      'APCPercentage',
-      'ApcPercentage',
-      'apcPercentage',
-      'OccupancyPercentage',
-      'occupancyPercentage',
-      'passengerLoadPercentage',
-      'passengerLoadPercent',
-      'loadPercentage',
-      'loadPercent',
-      'percentFull',
-      'passengerLoad',
-      'occupancy',
-      'occupancyStatus',
-      'load'
-    )
-  );
-  if (apc === null && onBoard !== null && capacity) apc = Math.round((onBoard / capacity) * 100);
+  let onBoard = num(pick(v, 'OnBoard', 'Onboard', 'PassengerCount', 'passengerCount', 'passengers', 'onBoard'));
+
+  // Kenosha's feed: passengerLoad is a head count next to capacity (e.g. 14 of 38).
+  // Other feeds use the same name for a percentage; treat it as a count only when it fits.
+  const rawLoad = pick(v, 'passengerLoad', 'PassengerLoad');
+  let apc = null;
+  if (typeof rawLoad === 'number' && capacity && rawLoad <= capacity) {
+    onBoard = onBoard ?? rawLoad;
+    apc = Math.round((rawLoad / capacity) * 100);
+  } else {
+    apc = loadPercent(
+      pick(
+        v,
+        'APCPercentage',
+        'ApcPercentage',
+        'apcPercentage',
+        'OccupancyPercentage',
+        'occupancyPercentage',
+        'passengerLoadPercentage',
+        'passengerLoadPercent',
+        'loadPercentage',
+        'loadPercent',
+        'percentFull',
+        'passengerLoad',
+        'occupancy',
+        'occupancyStatus',
+        'load'
+      )
+    );
+    if (apc === null && onBoard !== null && capacity) apc = Math.round((onBoard / capacity) * 100);
+  }
+
+  // Degrees first (headingDegrees), then compass words ("SW"). A reported 0 with no
+  // movement usually means "unknown", so leave it null and let the map derive it.
+  let heading = headingDegrees(pick(v, 'headingDegrees', 'HeadingDegrees', 'bearingDegrees', 'Heading', 'Bearing', 'bearing', 'course', 'courseOverGround', 'heading'));
+  const speed = num(pick(v, 'Speed', 'speed'));
+  if (heading === 0 && (speed === 0 || speed === null)) heading = null;
+
+  const lastUpdated = parseSyncroDate(pick(v, 'LastUpdated', 'LastUpdate', 'Timestamp', 'lastUpdated', 'lastUpdate', 'timestamp', 'updatedAt', 'time'));
+  const ageSeconds = lastUpdated ? Math.max(0, Math.round((nowMs - new Date(lastUpdated).getTime()) / 1000)) : null;
+
   return {
     id,
     name: String(pick(v, 'Name', 'VehicleName', 'BusName', 'name', 'label', 'vehicleName', 'fleetNumber') ?? id),
     routeId: pick(v, 'RouteId', 'RouteID', 'routeId') ?? v?.route?.id ?? fallbackRouteId,
+    patternId: pick(v, 'patternId', 'PatternId', 'PatternID') ?? v?.pattern?.id ?? null,
     lat: num(pick(v, 'Latitude', 'Lat', 'lat', 'latitude')),
     lng: num(pick(v, 'Longitude', 'Lon', 'Lng', 'lng', 'lon', 'longitude')),
-    heading: num(
-      pick(v, 'Heading', 'Bearing', 'heading', 'bearing', 'course', 'courseOverGround', 'headingDegrees', 'bearingDegrees', 'orientation', 'rotation', 'angle', 'compass', 'direction')
-    ),
-    speed: num(pick(v, 'Speed', 'speed')),
+    heading,
+    speed,
     // Passenger load as a percentage of capacity (automatic passenger counter).
     apcPercentage: apc,
     onBoard,
     capacity,
-    lastUpdated: parseSyncroDate(pick(v, 'LastUpdated', 'LastUpdate', 'Timestamp', 'lastUpdated', 'lastUpdate', 'timestamp', 'updatedAt', 'time')),
+    lastUpdated,
+    ageSeconds,
+    isStale: ageSeconds !== null && ageSeconds > STALE_WARN_S,
     destination: pick(v, 'Destination', 'Headsign', 'headsign', 'destination') ?? v?.pattern?.name ?? null,
     doorStatus: num(pick(v, 'DoorStatus', 'doorStatus')),
     isOnRoute: pick(v, 'IsOnRoute', 'isOnRoute', 'onRoute') ?? true,
@@ -641,6 +679,28 @@ export async function getRoutes({ force = false } = {}) {
   return routes;
 }
 
+const patternsCache = new Map(); // routeId -> { at, byId: Map(patternId -> { name, direction }) }
+
+/** Pattern names/directions for a route (portal only), cached for the routes TTL. Best effort. */
+async function patternIndex(routeId) {
+  const key = String(routeId);
+  const cached = patternsCache.get(key);
+  if (cached && Date.now() - cached.at < ROUTES_TTL_MS) return cached.byId;
+  const byId = new Map();
+  try {
+    const list = unwrapList(await fetchPortal(`routes/${encodeURIComponent(routeId)}/patterns`));
+    for (const p of list) {
+      const id = pick(p, 'id', 'ID', 'patternId');
+      if (id === undefined || id === null) continue;
+      byId.set(String(id), { name: pick(p, 'name', 'Name') ?? null, direction: pick(p, 'direction', 'Direction') ?? null });
+    }
+  } catch {
+    // no pattern names; vehicles just lack a destination line
+  }
+  patternsCache.set(key, { at: Date.now(), byId });
+  return byId;
+}
+
 export async function getVehicles(routeId) {
   if (isMock()) {
     return mock
@@ -649,14 +709,25 @@ export async function getVehicles(routeId) {
       .filter((v) => v.id !== undefined && v.id !== null && v.lat !== null && v.lng !== null);
   }
   if (!routesCache.routes && API_STYLE === 'auto') await getRoutes().catch(() => {});
-  const raw =
-    apiStyle() === 'portal'
-      ? await fetchPortal(`routes/${encodeURIComponent(routeId)}/vehicles`)
-      : await fetchUpstream(`/Route/${encodeURIComponent(routeId)}/Vehicles`);
-  const list = apiStyle() === 'portal' ? unwrapList(raw) : Array.isArray(raw) ? raw : raw?.Vehicles || [];
-  return list
+  const portal = apiStyle() === 'portal';
+  const raw = portal
+    ? await fetchPortal(`routes/${encodeURIComponent(routeId)}/vehicles`)
+    : await fetchUpstream(`/Route/${encodeURIComponent(routeId)}/Vehicles`);
+  const list = portal ? unwrapList(raw) : Array.isArray(raw) ? raw : raw?.Vehicles || [];
+  const vehicles = list
     .map((v) => normalizeVehicle(v, routeId))
-    .filter((v) => v.id !== undefined && v.id !== null && v.lat !== null && v.lng !== null);
+    .filter((v) => v.id !== undefined && v.id !== null && v.lat !== null && v.lng !== null)
+    // Parked buses report their last fix for days; a fix older than STALE_HIDE_S is not a bus you can catch.
+    .filter((v) => v.ageSeconds === null || v.ageSeconds <= STALE_HIDE_S);
+
+  if (portal && vehicles.some((v) => v.patternId !== null && !v.destination)) {
+    const patterns = await patternIndex(routeId);
+    for (const v of vehicles) {
+      const p = v.patternId !== null ? patterns.get(String(v.patternId)) : null;
+      if (p && !v.destination) v.destination = p.direction || p.name || null;
+    }
+  }
+  return vehicles;
 }
 
 export async function getArrivals(stopId, routeId = null) {
