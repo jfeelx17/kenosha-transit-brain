@@ -112,6 +112,7 @@ Polling defaults (10 s / 15 s, one user) are well within what that site's own pa
 | Symptom | Fix |
 |---|---|
 | Banner: "Couldn't load routes: ... 403" | Upstream blocked the request. Retry; meanwhile `./scripts/dev.sh --mock`. Check with the curl below. |
+| Banner: "Couldn't load routes: ..." (any reason) | Open `http://localhost:3000/api/debug/upstream?path=/Region/0/Routes` in a tab. It shows the exact status, content type and body the site sent. Try `?path=/Regions` and `?path=/Route/1/Vehicles` too. |
 | Map shows stops but no route lines | Normal if the site has no KML traces. Lines are best effort. |
 | Buses appear but no stops or lines at all | MapLibre's worker files are missing. Run `cd frontend && node scripts/copy-maplibre-worker.js` (normally automatic on install/dev/build). |
 | Plain dark background, no streets | Basemap host unreachable. Set `NEXT_PUBLIC_MAP_STYLE=carto-dark` or `osm-dark` in `.env.local`, rebuild. |

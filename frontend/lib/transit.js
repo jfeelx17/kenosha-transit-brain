@@ -12,6 +12,7 @@ import * as mock from './mock';
 
 export const BASE_URL = (process.env.TRANSIT_BASE_URL || 'https://www.kenoshatransit.com').replace(/\/+$/, '');
 const CUSTOMER_ID = process.env.TRANSIT_CUSTOMER_ID || '';
+const REGION_ID = process.env.TRANSIT_REGION_ID || '0';
 const TIMEOUT_MS = Number(process.env.TRANSIT_TIMEOUT_MS) || 10000;
 const ROUTES_TTL_MS = Number(process.env.TRANSIT_ROUTES_TTL_MS) || 5 * 60 * 1000;
 
@@ -33,44 +34,84 @@ export class UpstreamError extends Error {
   }
 }
 
+/** HTML/text body -> short readable excerpt (tags stripped) for error messages and the debug endpoint. */
+export function readableSnippet(text, max = 400) {
+  return String(text || '')
+    .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+function upstreamHeaders(raw) {
+  return {
+    'User-Agent': CHROME_UA,
+    Accept: raw ? '*/*' : 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+    Referer: `${BASE_URL}/`,
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+}
+
 /**
- * GET a path from the upstream API. Returns parsed JSON (or the raw text when
- * raw=true). Throws UpstreamError with a meaningful status on any failure.
+ * Low-level GET. Resolves with status, headers and body text; only network-level
+ * failures reject. Used by fetchUpstream() and by /api/debug/upstream.
  */
-export async function fetchUpstream(path, { raw = false } = {}) {
+export async function probeUpstream(path, { raw = false } = {}) {
   const url = `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const startedAt = Date.now();
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': CHROME_UA,
-        Accept: raw ? '*/*' : 'application/json, text/javascript, */*; q=0.01',
-        'Accept-Language': 'en-US,en;q=0.9',
-        Referer: `${BASE_URL}/`,
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-      cache: 'no-store',
-      signal: controller.signal,
-    });
+    const res = await fetch(url, { headers: upstreamHeaders(raw), cache: 'no-store', redirect: 'follow', signal: controller.signal });
     const text = await res.text();
-    if (!res.ok) {
-      throw new UpstreamError(`Kenosha Transit API answered ${res.status} for ${path}`, res.status, text.slice(0, 200));
-    }
-    if (raw) return text;
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new UpstreamError(`Kenosha Transit API sent non-JSON for ${path}`, 502, text.slice(0, 200));
-    }
+    return {
+      url,
+      finalUrl: res.url || url,
+      status: res.status,
+      ok: res.ok,
+      contentType: res.headers.get('content-type') || '',
+      server: res.headers.get('server') || '',
+      cfRay: res.headers.get('cf-ray') || '',
+      ms: Date.now() - startedAt,
+      text,
+    };
   } catch (err) {
-    if (err instanceof UpstreamError) throw err;
     if (err?.name === 'AbortError') {
       throw new UpstreamError(`Kenosha Transit API timed out after ${TIMEOUT_MS} ms for ${path}`, 504);
     }
     throw new UpstreamError(`Kenosha Transit API unreachable for ${path}: ${err?.message || err}`, 502);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * GET a path from the upstream API. Returns parsed JSON (or the raw text when
+ * raw=true). Throws UpstreamError with a meaningful status and a readable
+ * excerpt of whatever the site actually sent.
+ */
+export async function fetchUpstream(path, { raw = false } = {}) {
+  const r = await probeUpstream(path, { raw });
+  if (!r.ok) {
+    throw new UpstreamError(
+      `Kenosha Transit API answered HTTP ${r.status} for ${path}: "${readableSnippet(r.text, 160)}"`,
+      r.status,
+      readableSnippet(r.text)
+    );
+  }
+  if (raw) return r.text;
+  try {
+    return JSON.parse(r.text);
+  } catch {
+    const kind = r.contentType.split(';')[0] || 'unknown content type';
+    throw new UpstreamError(
+      `Kenosha Transit API sent ${kind} instead of JSON for ${path} (HTTP ${r.status}): "${readableSnippet(r.text, 160)}"`,
+      502,
+      readableSnippet(r.text)
+    );
   }
 }
 
@@ -232,15 +273,53 @@ export function kmlToLines(kml) {
 
 let routesCache = { at: 0, routes: null };
 
+async function fetchRoutesForRegion(regionId) {
+  const raw = await fetchUpstream(`/Region/${encodeURIComponent(regionId)}/Routes`);
+  const list = Array.isArray(raw) ? raw : raw?.Routes || raw?.routes || [];
+  return list.map(normalizeRoute).filter((r) => r.id !== undefined && r.id !== null);
+}
+
+/**
+ * Routes come from /Region/{id}/Routes. Most sites use region 0, but not all,
+ * so when that fails or is empty we ask /Regions which ids exist and merge
+ * the routes of every region.
+ */
+async function fetchAllRoutes() {
+  let firstError = null;
+  try {
+    const routes = await fetchRoutesForRegion(REGION_ID);
+    if (routes.length) return routes;
+  } catch (err) {
+    firstError = err;
+  }
+
+  let regions = [];
+  try {
+    const raw = await fetchUpstream('/Regions');
+    regions = (Array.isArray(raw) ? raw : raw?.Regions || [])
+      .map((g) => pick(g, 'ID', 'Id', 'id', 'RegionId'))
+      .filter((id) => id !== undefined && id !== null && String(id) !== String(REGION_ID));
+  } catch (err) {
+    throw firstError || err;
+  }
+
+  const merged = new Map();
+  const results = await Promise.allSettled(regions.map((id) => fetchRoutesForRegion(id)));
+  for (const r of results) {
+    if (r.status === 'fulfilled') for (const route of r.value) merged.set(String(route.id), route);
+  }
+  if (merged.size) return [...merged.values()];
+  if (firstError) throw firstError;
+  throw new UpstreamError(`Kenosha Transit API listed ${regions.length} region(s) but none had routes`, 502);
+}
+
 export async function getRoutes({ force = false } = {}) {
   if (isMock()) return mock.routes().map(normalizeRoute);
 
   const now = Date.now();
   if (!force && routesCache.routes && now - routesCache.at < ROUTES_TTL_MS) return routesCache.routes;
 
-  const raw = await fetchUpstream('/Region/0/Routes');
-  const list = Array.isArray(raw) ? raw : raw?.Routes || raw?.routes || [];
-  const routes = list.map(normalizeRoute).filter((r) => r.id !== undefined && r.id !== null);
+  const routes = await fetchAllRoutes();
 
   // Some Syncromatics deployments omit Stops from the region listing. Best effort per route.
   await Promise.allSettled(
