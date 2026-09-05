@@ -1,18 +1,32 @@
-// Server-side only. Talks to the Kenosha Transit real-time API, which is a
-// GMV Syncromatics "Track" white-label site. Never import this from React
-// components: it holds the upstream URL and the browser-like User-Agent.
+// Server-side only. Talks to the Kenosha Transit real-time data behind
+// kenoshatransit.com. Never import this from React components.
 //
-// Known endpoints (all GET, JSON):
-//   /Region/0/Routes            routes + their stops + colours
-//   /Route/{routeId}/Vehicles   live positions, Heading, APCPercentage (load %)
-//   /Stop/{stopId}/Arrivals     predictions with SecondsToArrival
-//   /Resources/Traces/{file}    KML polyline of a route (best effort)
+// The site (a GMV Syncromatics "portal" front-end) gets its data through a
+// same-origin proxy that adds the vendor API key on the server:
+//
+//   GET https://www.kenoshatransit.com/api/rtpi?path=<portal path>
+//
+// Portal paths seen in the site's own code:
+//   routes/{routeId}/vehicles            live positions + passenger load
+//   routes/{routeId}/stops               stops served by a route
+//   routes/{routeId}/patterns            patterns with an encoded polyline shape
+//   routes/{routeId}/patterns/{p}/stops  ordered stops of a pattern
+//   stops/{stopId}/arrivals[?routeId=]   predictions with secondsToArrival
+//   stops/search?lat=&lon=&distance=     nearby stops
+//
+// The route list itself is server-rendered into the page's React Router
+// hydration data, so we read it from the HTML shell (no key needed).
+//
+// Older Syncromatics "Track" sites use /Region/0/Routes, /Route/{id}/Vehicles
+// and /Stop/{id}/Arrivals; those remain as a fallback (TRANSIT_API_STYLE=track).
 
 import * as mock from './mock';
 
 export const BASE_URL = (process.env.TRANSIT_BASE_URL || 'https://www.kenoshatransit.com').replace(/\/+$/, '');
 const CUSTOMER_ID = process.env.TRANSIT_CUSTOMER_ID || '';
 const REGION_ID = process.env.TRANSIT_REGION_ID || '0';
+const API_STYLE = (process.env.TRANSIT_API_STYLE || 'auto').toLowerCase(); // auto | portal | track
+const RTPI_PATH = process.env.TRANSIT_RTPI_PATH || '/api/rtpi';
 const TIMEOUT_MS = Number(process.env.TRANSIT_TIMEOUT_MS) || 10000;
 const ROUTES_TTL_MS = Number(process.env.TRANSIT_ROUTES_TTL_MS) || 5 * 60 * 1000;
 
@@ -120,6 +134,156 @@ export async function fetchUpstream(path, { raw = false } = {}) {
   }
 }
 
+/** Build the same-origin proxy URL the site's own front-end uses. */
+export function rtpiPath(portalPath) {
+  const clean = String(portalPath).replace(/^\/+/, '');
+  return `${RTPI_PATH}?path=${encodeURIComponent(clean)}`;
+}
+
+/** GET a portal path through kenoshatransit.com's /api/rtpi proxy. */
+export async function fetchPortal(portalPath) {
+  return fetchUpstream(rtpiPath(portalPath));
+}
+
+/** Portal responses are either a bare array or { data: [...] }. */
+export function unwrapList(value) {
+  if (Array.isArray(value)) return value;
+  if (value && Array.isArray(value.data)) return value.data;
+  if (value && Array.isArray(value.items)) return value.items;
+  if (value && Array.isArray(value.results)) return value.results;
+  return [];
+}
+
+/**
+ * Decode React Router's turbo-stream hydration payload (the JSON array passed
+ * to streamController.enqueue). Objects are {"_<keyIndex>": valueIndex},
+ * arrays are index lists, negative numbers are sentinels (-5 = null).
+ */
+export function decodeTurboStream(arr) {
+  const SENTINEL = { '-1': undefined, '-2': NaN, '-3': -Infinity, '-4': -0, '-5': null, '-6': Infinity, '-7': undefined };
+  const cache = new Map();
+  const hydrate = (i) => {
+    if (typeof i !== 'number') return i;
+    if (i < 0) return SENTINEL[String(i)];
+    if (cache.has(i)) return cache.get(i);
+    const v = arr[i];
+    if (Array.isArray(v)) {
+      const out = [];
+      cache.set(i, out);
+      for (const x of v) out.push(hydrate(x));
+      return out;
+    }
+    if (v && typeof v === 'object') {
+      const out = {};
+      cache.set(i, out);
+      for (const [k, val] of Object.entries(v)) {
+        const key = k.startsWith('_') ? arr[Number(k.slice(1))] : k;
+        out[typeof key === 'string' ? key : k] = hydrate(val);
+      }
+      return out;
+    }
+    return v;
+  };
+  return hydrate(0);
+}
+
+/** Pull the hydration payload(s) out of the HTML shell and decode them. */
+export function hydrationFromHtml(html) {
+  const re = /streamController\.enqueue\((".*?")\);?/gs;
+  const decoded = [];
+  let m;
+  while ((m = re.exec(html))) {
+    try {
+      const parsed = JSON.parse(JSON.parse(m[1]));
+      decoded.push(Array.isArray(parsed) ? decodeTurboStream(parsed) : parsed);
+    } catch {
+      // ignore chunks we cannot parse
+    }
+  }
+  return decoded;
+}
+
+/** Route list embedded in the page: loaderData["routes/transit"].services[].routes[]. */
+export function routesFromHydration(html) {
+  const out = [];
+  for (const chunk of hydrationFromHtml(html)) {
+    const loader = chunk?.loaderData || {};
+    for (const value of Object.values(loader)) {
+      const services = value?.services;
+      if (!Array.isArray(services)) continue;
+      for (const service of services) for (const r of service?.routes || []) out.push(r);
+    }
+  }
+  return out;
+}
+
+/** Google encoded polyline -> [[lng, lat], ...]. Tries precision 5, then 6. */
+export function decodePolyline(str, precision = 5) {
+  const factor = 10 ** precision;
+  const coords = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+  while (index < str.length) {
+    let b;
+    let shift = 0;
+    let result = 0;
+    do {
+      b = str.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20 && index < str.length);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0;
+    result = 0;
+    do {
+      b = str.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20 && index < str.length);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+    coords.push([lng / factor, lat / factor]);
+  }
+  const sane = coords.every(([x, y]) => Math.abs(x) <= 180 && Math.abs(y) <= 90);
+  if (!sane && precision === 5) return decodePolyline(str, 6);
+  return sane ? coords : [];
+}
+
+/** Anything shape-like (encoded polyline, [[lat,lon]], [{lat,lon}], GeoJSON) -> [[lng,lat], ...] lines. */
+export function shapeToLines(shape) {
+  if (!shape) return [];
+  if (typeof shape === 'string') {
+    const line = decodePolyline(shape);
+    return line.length > 1 ? [line] : [];
+  }
+  if (Array.isArray(shape)) {
+    if (shape.length && Array.isArray(shape[0]) && typeof shape[0][0] === 'number') {
+      // [[lat, lon], ...] (most vendors) or [[lng, lat], ...]
+      const latFirst = shape.every(([a, b]) => Math.abs(a) <= 90 && Math.abs(b) <= 180 && Math.abs(b) > Math.abs(a));
+      const line = shape.map(([a, b]) => (latFirst ? [b, a] : [a, b]));
+      return line.length > 1 ? [line] : [];
+    }
+    if (shape.length && typeof shape[0] === 'object') {
+      const line = shape
+        .map((p) => [num(pick(p, 'lon', 'lng', 'longitude', 'Longitude')), num(pick(p, 'lat', 'latitude', 'Latitude'))])
+        .filter(([x, y]) => x !== null && y !== null);
+      return line.length > 1 ? [line] : [];
+    }
+    return [];
+  }
+  if (typeof shape === 'object') {
+    if (shape.type === 'LineString') return [shape.coordinates];
+    if (shape.type === 'MultiLineString') return shape.coordinates;
+    if (shape.type === 'Feature') return shapeToLines(shape.geometry);
+    if (shape.type === 'FeatureCollection') return shape.features.flatMap((f) => shapeToLines(f.geometry));
+    if (shape.geometry) return shapeToLines(shape.geometry);
+    if (shape.shape || shape.encodedShape || shape.polyline || shape.points) {
+      return shapeToLines(shape.shape || shape.encodedShape || shape.polyline || shape.points);
+    }
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // Normalizers: PascalCase upstream -> small camelCase objects the UI relies on.
 // Every accessor tolerates missing keys and the common spelling variants.
@@ -159,16 +323,18 @@ export function normalizeColor(value, fallback = '#38bdf8') {
 
 const validStop = (s) => s.id !== null && s.id !== undefined && s.lat !== null && s.lng !== null;
 
-export function normalizeStop(s, routeId) {
-  const id = pick(s, 'ID', 'Id', 'id', 'StopId', 'StopID');
+export function normalizeStop(raw, routeId) {
+  const s = raw && raw.stop && typeof raw.stop === 'object' ? { ...raw.stop, sequence: raw.sequence ?? raw.stop.sequence } : raw;
+  const id = pick(s, 'ID', 'Id', 'id', 'StopId', 'StopID', 'stopId');
   return {
     id,
     name: pick(s, 'Name', 'StopName', 'name') ?? `Stop ${id}`,
-    lat: num(pick(s, 'Latitude', 'Lat', 'lat')),
-    lng: num(pick(s, 'Longitude', 'Lon', 'Lng', 'lng')),
+    lat: num(pick(s, 'Latitude', 'Lat', 'lat', 'latitude')),
+    lng: num(pick(s, 'Longitude', 'Lon', 'Lng', 'lng', 'lon', 'longitude')),
     routeId,
-    order: num(pick(s, 'Order', 'Sequence')),
-    isTimePoint: Boolean(pick(s, 'IsTimePoint')),
+    order: num(pick(s, 'Order', 'Sequence', 'sequence', 'stopSequence')),
+    code: pick(s, 'stopCode', 'StopCode', 'rtpiNumber', 'RtpiNumber', 'Code') ?? null,
+    isTimePoint: Boolean(pick(s, 'IsTimePoint', 'isTimePoint')),
   };
 }
 
@@ -177,60 +343,118 @@ export function normalizeRoute(r) {
   const stopsRaw = Array.isArray(r?.Stops) ? r.Stops : [];
   return {
     id,
-    name: pick(r, 'Name', 'LongName') ?? `Route ${id}`,
-    shortName: String(pick(r, 'ShortName', 'Number', 'RouteNumber') ?? id),
-    color: normalizeColor(pick(r, 'Color', 'RouteColor')),
-    textColor: normalizeColor(pick(r, 'TextColor'), '#ffffff'),
-    isRunning: pick(r, 'IsRunning', 'IsActive') ?? true,
+    name: pick(r, 'Name', 'LongName', 'name', 'longName') ?? `Route ${id}`,
+    shortName: String(pick(r, 'ShortName', 'Number', 'RouteNumber', 'shortName') ?? id),
+    color: normalizeColor(pick(r, 'Color', 'RouteColor', 'color')),
+    textColor: normalizeColor(pick(r, 'TextColor', 'textColor'), '#ffffff'),
+    description: pick(r, 'description', 'Description') ?? null,
+    routeType: pick(r, 'routeType', 'RouteType') ?? null,
+    displayOrder: num(pick(r, 'displayOrder', 'Order', 'order')),
+    isRunning: pick(r, 'IsRunning', 'IsActive', 'isRunning', 'isActive') ?? true,
     traceFile: pick(r, 'RouteTraceFilename', 'TraceFile') ?? null,
     stops: stopsRaw.map((s) => normalizeStop(s, id)).filter(validStop),
   };
 }
 
+const OCCUPANCY_WORDS = {
+  EMPTY: 5,
+  MANY_SEATS_AVAILABLE: 25,
+  FEW_SEATS_AVAILABLE: 55,
+  STANDING_ROOM_ONLY: 80,
+  CRUSHED_STANDING_ROOM_ONLY: 95,
+  FULL: 100,
+  NOT_ACCEPTING_PASSENGERS: 100,
+  LOW: 20,
+  MEDIUM: 55,
+  HIGH: 85,
+};
+
+/** Passenger load as 0-100 from a number, a "45%" string, or a GTFS-style occupancy word. */
+function loadPercent(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? (value <= 1 && value > 0 ? Math.round(value * 100) : value) : null;
+  const str = String(value).trim();
+  const n = Number(str.replace('%', ''));
+  if (Number.isFinite(n) && str !== '') return n;
+  const word = str.toUpperCase().replace(/[\s-]+/g, '_');
+  return OCCUPANCY_WORDS[word] ?? null;
+}
+
 export function normalizeVehicle(v, fallbackRouteId = null) {
-  const id = pick(v, 'ID', 'Id', 'id', 'VehicleId', 'VehicleID');
+  const id = pick(v, 'ID', 'Id', 'id', 'VehicleId', 'VehicleID', 'vehicleId');
+  const onBoard = num(pick(v, 'OnBoard', 'Onboard', 'PassengerCount', 'passengerCount', 'passengers', 'onBoard'));
+  const capacity = num(pick(v, 'Capacity', 'VehicleCapacity', 'capacity', 'maxCapacity', 'seatedCapacity'));
+  let apc = loadPercent(
+    pick(
+      v,
+      'APCPercentage',
+      'ApcPercentage',
+      'apcPercentage',
+      'OccupancyPercentage',
+      'occupancyPercentage',
+      'passengerLoadPercentage',
+      'passengerLoadPercent',
+      'loadPercentage',
+      'loadPercent',
+      'percentFull',
+      'passengerLoad',
+      'occupancy',
+      'occupancyStatus',
+      'load'
+    )
+  );
+  if (apc === null && onBoard !== null && capacity) apc = Math.round((onBoard / capacity) * 100);
   return {
     id,
-    name: String(pick(v, 'Name', 'VehicleName', 'BusName') ?? id),
-    routeId: pick(v, 'RouteId', 'RouteID') ?? fallbackRouteId,
-    lat: num(pick(v, 'Latitude', 'Lat')),
-    lng: num(pick(v, 'Longitude', 'Lon', 'Lng')),
-    heading: num(pick(v, 'Heading', 'Bearing')),
-    speed: num(pick(v, 'Speed')),
-    // Passenger load as a percentage of capacity, from the automatic passenger counter.
-    apcPercentage: num(pick(v, 'APCPercentage', 'ApcPercentage', 'OccupancyPercentage', 'Occupancy')),
-    onBoard: num(pick(v, 'OnBoard', 'Onboard', 'PassengerCount')),
-    capacity: num(pick(v, 'Capacity', 'VehicleCapacity')),
-    lastUpdated: parseSyncroDate(pick(v, 'LastUpdated', 'LastUpdate', 'Timestamp')),
-    destination: pick(v, 'Destination', 'Headsign') ?? null,
-    doorStatus: num(pick(v, 'DoorStatus')),
-    isOnRoute: pick(v, 'IsOnRoute') ?? true,
+    name: String(pick(v, 'Name', 'VehicleName', 'BusName', 'name', 'label', 'vehicleName', 'fleetNumber') ?? id),
+    routeId: pick(v, 'RouteId', 'RouteID', 'routeId') ?? v?.route?.id ?? fallbackRouteId,
+    lat: num(pick(v, 'Latitude', 'Lat', 'lat', 'latitude')),
+    lng: num(pick(v, 'Longitude', 'Lon', 'Lng', 'lng', 'lon', 'longitude')),
+    heading: num(pick(v, 'Heading', 'Bearing', 'heading', 'bearing', 'course')),
+    speed: num(pick(v, 'Speed', 'speed')),
+    // Passenger load as a percentage of capacity (automatic passenger counter).
+    apcPercentage: apc,
+    onBoard,
+    capacity,
+    lastUpdated: parseSyncroDate(pick(v, 'LastUpdated', 'LastUpdate', 'Timestamp', 'lastUpdated', 'lastUpdate', 'timestamp', 'updatedAt', 'time')),
+    destination: pick(v, 'Destination', 'Headsign', 'headsign', 'destination') ?? v?.pattern?.name ?? null,
+    doorStatus: num(pick(v, 'DoorStatus', 'doorStatus')),
+    isOnRoute: pick(v, 'IsOnRoute', 'isOnRoute', 'onRoute') ?? true,
   };
 }
 
 function normalizeArrival(a, group, stopId) {
-  let seconds = num(pick(a, 'SecondsToArrival', 'SecondsUntilArrival', 'Seconds'));
+  let seconds = num(pick(a, 'SecondsToArrival', 'secondsToArrival', 'SecondsUntilArrival', 'secondsUntilArrival', 'Seconds', 'seconds'));
   if (seconds === null) {
-    const minutes = num(pick(a, 'Minutes', 'MinutesToArrival'));
+    const minutes = num(pick(a, 'Minutes', 'MinutesToArrival', 'minutes', 'minutesToArrival'));
     if (minutes !== null) seconds = minutes * 60;
   }
-  const vehicleId = pick(a, 'VehicleID', 'VehicleId', 'BusID', 'BusId') ?? null;
-  const predicted = parseSyncroDate(pick(a, 'ArriveTime', 'PredictedArrivalTime', 'EstimatedArrivalTime'));
+  const route = a?.route || a?.pattern?.route || null;
+  const vehicle = a?.vehicle && typeof a.vehicle === 'object' ? a.vehicle : null;
+  const vehicleId = vehicle?.id ?? pick(a, 'VehicleID', 'VehicleId', 'vehicleId', 'BusID', 'BusId') ?? null;
+  const predicted = parseSyncroDate(
+    pick(a, 'ArriveTime', 'PredictedArrivalTime', 'EstimatedArrivalTime', 'predictedArrivalTime', 'predictedArrival', 'arrivalTime', 'eta', 'expectedArrival')
+  );
   return {
-    stopId: pick(a, 'StopId', 'StopID') ?? stopId,
-    routeId: pick(a, 'RouteID', 'RouteId') ?? pick(group, 'RouteID', 'RouteId', 'ID') ?? null,
-    routeName: pick(a, 'RouteName') ?? pick(group, 'RouteName', 'Name') ?? null,
-    color: normalizeColor(pick(a, 'Color') ?? pick(group, 'Color'), null),
+    stopId: pick(a, 'StopId', 'StopID', 'stopId') ?? a?.stop?.id ?? stopId,
+    routeId: pick(a, 'RouteID', 'RouteId', 'routeId') ?? route?.id ?? pick(group, 'RouteID', 'RouteId', 'ID', 'id') ?? null,
+    routeName: pick(a, 'RouteName', 'routeName') ?? route?.name ?? pick(group, 'RouteName', 'Name', 'name') ?? null,
+    routeShortName: route?.shortName ?? pick(a, 'routeShortName') ?? null,
+    color: normalizeColor(pick(a, 'Color', 'color') ?? route?.color ?? pick(group, 'Color'), null),
     vehicleId,
-    vehicleName: pick(a, 'VehicleName', 'BusName') ?? (vehicleId !== null ? String(vehicleId) : null),
+    vehicleName:
+      vehicle?.name ?? vehicle?.label ?? pick(a, 'VehicleName', 'BusName', 'vehicleName') ?? (vehicleId !== null ? String(vehicleId) : null),
     secondsToArrival: seconds,
     minutes: seconds === null ? null : Math.max(0, Math.round(seconds / 60)),
     predictedAt: predicted ?? (seconds === null ? null : new Date(Date.now() + seconds * 1000).toISOString()),
-    scheduledAt: parseSyncroDate(pick(a, 'ScheduledArrivalTime', 'ScheduledTime')),
-    direction: pick(a, 'Direction', 'DirectionName') ?? null,
-    destination: pick(a, 'Destination', 'Headsign') ?? null,
-    isLastStop: Boolean(pick(a, 'IsLastStop')),
-    deviationSeconds: num(pick(a, 'Deviation')),
+    scheduledAt: parseSyncroDate(
+      pick(a, 'ScheduledArrivalTime', 'ScheduledTime', 'scheduledArrivalTime', 'scheduledArrival', 'scheduledTime') ?? a?.schedulePrediction?.scheduledTime
+    ),
+    direction: a?.pattern?.direction ?? pick(a, 'Direction', 'DirectionName', 'direction') ?? null,
+    destination: pick(a, 'Destination', 'Headsign', 'headsign', 'destination') ?? (a?.pattern?.name && a.pattern.name !== 'Pattern' ? a.pattern.name : null),
+    patternId: a?.pattern?.id ?? pick(a, 'PatternId', 'patternId') ?? null,
+    isLastStop: Boolean(pick(a, 'IsLastStop', 'isLastStop')),
+    deviationSeconds: num(pick(a, 'Deviation', 'deviation', 'deviationSeconds')),
   };
 }
 
@@ -273,31 +497,47 @@ export function kmlToLines(kml) {
 }
 
 // ---------------------------------------------------------------------------
-// Data access (mock-aware)
+// Data access (mock-aware). "portal" = kenoshatransit.com/api/rtpi proxy,
+// "track" = classic Syncromatics Track endpoints. Auto picks whichever answers.
 // ---------------------------------------------------------------------------
 
-let routesCache = { at: 0, routes: null };
+let routesCache = { at: 0, routes: null, style: null };
 
-async function fetchRoutesForRegion(regionId) {
+function looksLikeRoutes(list) {
+  return list.length > 0 && list.every((r) => r && typeof r === 'object');
+}
+
+async function portalRoutes() {
+  // 1. The proxy may expose the list directly.
+  try {
+    const list = unwrapList(await fetchPortal('routes'));
+    if (looksLikeRoutes(list)) return list.map(normalizeRoute).filter((r) => r.id !== undefined && r.id !== null);
+  } catch {
+    // fall through
+  }
+  // 2. Otherwise it is server-rendered into the HTML shell.
+  const html = await fetchUpstream('/', { raw: true });
+  const list = routesFromHydration(html);
+  if (!looksLikeRoutes(list)) {
+    throw new UpstreamError('Could not find the route list in the site page data (hydration payload)', 502);
+  }
+  return list.map(normalizeRoute).filter((r) => r.id !== undefined && r.id !== null);
+}
+
+async function trackRoutesForRegion(regionId) {
   const raw = await fetchUpstream(`/Region/${encodeURIComponent(regionId)}/Routes`);
   const list = Array.isArray(raw) ? raw : raw?.Routes || raw?.routes || [];
   return list.map(normalizeRoute).filter((r) => r.id !== undefined && r.id !== null);
 }
 
-/**
- * Routes come from /Region/{id}/Routes. Most sites use region 0, but not all,
- * so when that fails or is empty we ask /Regions which ids exist and merge
- * the routes of every region.
- */
-async function fetchAllRoutes() {
+async function trackRoutes() {
   let firstError = null;
   try {
-    const routes = await fetchRoutesForRegion(REGION_ID);
+    const routes = await trackRoutesForRegion(REGION_ID);
     if (routes.length) return routes;
   } catch (err) {
     firstError = err;
   }
-
   let regions = [];
   try {
     const raw = await fetchUpstream('/Regions');
@@ -307,15 +547,29 @@ async function fetchAllRoutes() {
   } catch (err) {
     throw firstError || err;
   }
-
   const merged = new Map();
-  const results = await Promise.allSettled(regions.map((id) => fetchRoutesForRegion(id)));
-  for (const r of results) {
-    if (r.status === 'fulfilled') for (const route of r.value) merged.set(String(route.id), route);
-  }
+  const results = await Promise.allSettled(regions.map((id) => trackRoutesForRegion(id)));
+  for (const r of results) if (r.status === 'fulfilled') for (const route of r.value) merged.set(String(route.id), route);
   if (merged.size) return [...merged.values()];
   if (firstError) throw firstError;
   throw new UpstreamError(`Kenosha Transit API listed ${regions.length} region(s) but none had routes`, 502);
+}
+
+async function portalStopsForRoute(routeId) {
+  const list = unwrapList(await fetchPortal(`routes/${encodeURIComponent(routeId)}/stops`));
+  return list.map((s) => normalizeStop(s, routeId)).filter(validStop);
+}
+
+async function trackStopsForRoute(routeId) {
+  const raw = await fetchUpstream(`/Route/${encodeURIComponent(routeId)}/Direction/0/Stops`);
+  const list = Array.isArray(raw) ? raw : raw?.Stops || [];
+  return list.map((s) => normalizeStop(s, routeId)).filter(validStop);
+}
+
+/** Which API flavour to use: env override, else whatever loaded the routes. */
+function apiStyle() {
+  if (API_STYLE === 'portal' || API_STYLE === 'track') return API_STYLE;
+  return routesCache.style || 'portal';
 }
 
 export async function getRoutes({ force = false } = {}) {
@@ -324,52 +578,113 @@ export async function getRoutes({ force = false } = {}) {
   const now = Date.now();
   if (!force && routesCache.routes && now - routesCache.at < ROUTES_TTL_MS) return routesCache.routes;
 
-  const routes = await fetchAllRoutes();
+  let routes;
+  let style;
+  if (API_STYLE === 'track') {
+    routes = await trackRoutes();
+    style = 'track';
+  } else if (API_STYLE === 'portal') {
+    routes = await portalRoutes();
+    style = 'portal';
+  } else {
+    try {
+      routes = await portalRoutes();
+      style = 'portal';
+    } catch (portalErr) {
+      try {
+        routes = await trackRoutes();
+        style = 'track';
+      } catch {
+        throw portalErr;
+      }
+    }
+  }
 
-  // Some Syncromatics deployments omit Stops from the region listing. Best effort per route.
+  routes.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0) || String(a.shortName).localeCompare(String(b.shortName)));
+
   await Promise.allSettled(
     routes
       .filter((r) => r.stops.length === 0)
       .map(async (r) => {
-        const stopsRaw = await fetchUpstream(`/Route/${encodeURIComponent(r.id)}/Direction/0/Stops`);
-        const arr = Array.isArray(stopsRaw) ? stopsRaw : stopsRaw?.Stops || [];
-        r.stops = arr.map((s) => normalizeStop(s, r.id)).filter(validStop);
+        r.stops = style === 'portal' ? await portalStopsForRoute(r.id) : await trackStopsForRoute(r.id);
       })
   );
 
-  routesCache = { at: now, routes };
+  routesCache = { at: now, routes, style };
   return routes;
 }
 
 export async function getVehicles(routeId) {
-  const raw = isMock() ? mock.vehicles(routeId) : await fetchUpstream(`/Route/${encodeURIComponent(routeId)}/Vehicles`);
-  const list = Array.isArray(raw) ? raw : raw?.Vehicles || [];
+  if (isMock()) {
+    return mock
+      .vehicles(routeId)
+      .map((v) => normalizeVehicle(v, routeId))
+      .filter((v) => v.id !== undefined && v.id !== null && v.lat !== null && v.lng !== null);
+  }
+  if (!routesCache.routes && API_STYLE === 'auto') await getRoutes().catch(() => {});
+  const raw =
+    apiStyle() === 'portal'
+      ? await fetchPortal(`routes/${encodeURIComponent(routeId)}/vehicles`)
+      : await fetchUpstream(`/Route/${encodeURIComponent(routeId)}/Vehicles`);
+  const list = apiStyle() === 'portal' ? unwrapList(raw) : Array.isArray(raw) ? raw : raw?.Vehicles || [];
   return list
     .map((v) => normalizeVehicle(v, routeId))
     .filter((v) => v.id !== undefined && v.id !== null && v.lat !== null && v.lng !== null);
 }
 
-export async function getArrivals(stopId) {
+export async function getArrivals(stopId, routeId = null) {
+  if (isMock()) return normalizeArrivals(mock.arrivals(stopId), stopId);
+  if (!routesCache.routes && API_STYLE === 'auto') await getRoutes().catch(() => {});
+  if (apiStyle() === 'portal') {
+    const query = routeId ? `?routeId=${encodeURIComponent(routeId)}` : '';
+    const raw = await fetchPortal(`stops/${encodeURIComponent(stopId)}/arrivals${query}`);
+    return normalizeArrivals(unwrapList(raw), stopId);
+  }
   const query = CUSTOMER_ID ? `?customerId=${encodeURIComponent(CUSTOMER_ID)}` : '';
-  const raw = isMock() ? mock.arrivals(stopId) : await fetchUpstream(`/Stop/${encodeURIComponent(stopId)}/Arrivals${query}`);
+  const raw = await fetchUpstream(`/Stop/${encodeURIComponent(stopId)}/Arrivals${query}`);
   return normalizeArrivals(raw, stopId);
 }
 
-/** GeoJSON Feature (MultiLineString) for a route, or null when no trace exists. */
+/** GeoJSON Feature (MultiLineString) for a route, or null when no shape exists. */
 export async function getTrace(routeId) {
   if (isMock()) return mock.trace(routeId);
 
   const routes = await getRoutes();
   const route = routes.find((r) => String(r.id) === String(routeId));
-  if (!route?.traceFile) return null;
+  if (!route) return null;
 
-  const kml = await fetchUpstream(`/Resources/Traces/${encodeURIComponent(route.traceFile)}`, { raw: true });
-  const coordinates = kmlToLines(kml);
-  if (!coordinates.length) return null;
+  let lines = [];
+  if (apiStyle() === 'portal') {
+    const seen = new Set();
+    for (const path of [`routes/${routeId}/patterns`, `routes/${routeId}/shapes`, `routes/${routeId}/paths`, `routes/${routeId}/geometry`]) {
+      try {
+        const raw = await fetchPortal(path);
+        const items = unwrapList(raw);
+        const candidates = items.length ? items : [raw];
+        for (const item of candidates) {
+          for (const line of shapeToLines(item)) {
+            const key = `${line.length}:${line[0]}:${line[line.length - 1]}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              lines.push(line);
+            }
+          }
+        }
+      } catch {
+        // try the next path
+      }
+      if (lines.length) break;
+    }
+  } else if (route.traceFile) {
+    const kml = await fetchUpstream(`/Resources/Traces/${encodeURIComponent(route.traceFile)}`, { raw: true });
+    lines = kmlToLines(kml);
+  }
+
+  if (!lines.length) return null;
   return {
     type: 'Feature',
     properties: { routeId: route.id, color: route.color, name: route.name },
-    geometry: { type: 'MultiLineString', coordinates },
+    geometry: { type: 'MultiLineString', coordinates: lines },
   };
 }
 

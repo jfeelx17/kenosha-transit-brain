@@ -17,10 +17,11 @@ Full setup, phone access and troubleshooting: [../docs/RUN_LOCAL.md](../docs/RUN
 
 ```
 pages/index.js                 loads the map client-side
-pages/api/routes.js            GET /Region/0/Routes  -> routes + stops (cached 5 min)
-pages/api/vehicles/[routeId]   GET /Route/{id}/Vehicles -> positions, heading, apcPercentage
-pages/api/arrivals/[stopId]    GET /Stop/{id}/Arrivals  -> secondsToArrival, sorted
-pages/api/trace/[routeId]      GET /Resources/Traces/*.kml -> GeoJSON line (best effort)
+pages/api/routes.js            route list from the site's page data + rtpi routes/{id}/stops (cached 5 min)
+pages/api/vehicles/[routeId]   rtpi routes/{id}/vehicles  -> positions, heading, apcPercentage
+pages/api/arrivals/[stopId]    rtpi stops/{id}/arrivals   -> secondsToArrival, sorted
+pages/api/trace/[routeId]      rtpi routes/{id}/patterns  -> decoded polyline as GeoJSON (best effort)
+pages/api/debug/*              discover + upstream inspectors for when the site changes
 lib/transit.js                 upstream fetch (Chrome UA), normalizers, mock switch
 lib/mock.js                    fake data used when KENOSHA_MOCK=1
 components/MapView.js          map, stops layer, vehicle markers, route chips

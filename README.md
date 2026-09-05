@@ -29,8 +29,9 @@ of Kenosha with live bus positions, a **Next Bus** bottom sheet showing minutes 
 reaches a tapped stop, and a **Crowd Meter** built from each bus's passenger-load percentage.
 
 ```
-Browser (Next.js app)  ──/api/vehicles/[routeId]──▶  Next.js API route  ──Chrome UA──▶  kenoshatransit.com/Route/{id}/Vehicles
-                       ──/api/arrivals/[stopId]───▶  (same-origin, no CORS)          ▶  kenoshatransit.com/Stop/{id}/Arrivals
+Browser (Next.js app)  ──/api/vehicles/[routeId]──▶  Next.js API route  ──Chrome UA──▶  kenoshatransit.com/api/rtpi?path=routes/{id}/vehicles
+                       ──/api/arrivals/[stopId]───▶  (same-origin, no CORS)          ▶  kenoshatransit.com/api/rtpi?path=stops/{id}/arrivals
+                       ──/api/routes──────────────▶                                  ▶  kenoshatransit.com/ (route list in page data)
 Upload UI (Flask :5000) ── drag & drop PDFs / GTFS ──▶ uploads/ ──▶ scripts/process_uploads.py ──▶ docs/knowledge_base.json
 ```
 

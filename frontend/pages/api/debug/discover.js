@@ -5,7 +5,7 @@
 // API-looking string, quotes the code around the URL-building spots, and
 // probes likely endpoints on the site and on api.syncromatics.com.
 // Open it in a browser tab and paste the JSON back when the map cannot load.
-import { BASE_URL, probeUpstream, readableSnippet, sendError, sendJson } from '../../../lib/transit';
+import { BASE_URL, probeUpstream, readableSnippet, routesFromHydration, rtpiPath, sendError, sendJson, unwrapList } from '../../../lib/transit';
 
 const MAX_ASSETS = 60;
 const MAX_ASSET_BYTES = 3 * 1024 * 1024;
@@ -177,7 +177,7 @@ async function probe(target, headers) {
       contentType: r.contentType.split(';')[0],
       isJson: json !== null,
       jsonSummary: summary,
-      preview: json !== null ? r.text.slice(0, 500) : readableSnippet(r.text, 120),
+      preview: json !== null ? r.text.slice(0, 1200) : readableSnippet(r.text, 120),
     };
   } catch (err) {
     return { target, error: err.message };
@@ -217,7 +217,7 @@ export default async function handler(req, res) {
           const text = r.text.slice(0, MAX_ASSET_BYTES);
           extractFromText(text, found);
           collectSnippets(path, text, snippets);
-          if (text.length <= 16 * 1024 && /Context|Service|Store|Endpoint|api|config|env/i.test(path)) {
+          if (text.length <= 16 * 1024 && /Context|Service|Store|Endpoint|api|config|env|Load|Vehicle|Arrival|Stop|Route/i.test(path)) {
             smallModules[path] = text;
           }
           const importRe = /["'](\.\/|\/assets\/)([A-Za-z0-9_.-]+\.m?js)["']/g;
@@ -239,6 +239,35 @@ export default async function handler(req, res) {
     const siteHeaders = { Origin: BASE_URL, Referer: `${BASE_URL}/` };
     report.siteProbes = await mapLimit(SITE_PROBES, CONCURRENCY, (p) => probe(p));
     report.portalProbes = await mapLimit(PORTAL_PROBES, CONCURRENCY, (u) => probe(u, siteHeaders));
+
+    // Routes embedded in the page, then real samples through the site's own /api/rtpi proxy.
+    const hydrationRoutes = routesFromHydration(shell.text);
+    report.hydrationRoutes = { count: hydrationRoutes.length, sample: hydrationRoutes.slice(0, 3) };
+    const firstRouteId = hydrationRoutes[0]?.id ?? PORTAL_ID;
+    const rtpiSamples = {};
+    const sample = async (name, portalPath) => {
+      rtpiSamples[name] = await probe(rtpiPath(portalPath));
+      return rtpiSamples[name];
+    };
+    await sample('routes', 'routes');
+    await sample('vehicles', `routes/${firstRouteId}/vehicles`);
+    const stops = await sample('stops', `routes/${firstRouteId}/stops`);
+    await sample('patterns', `routes/${firstRouteId}/patterns`);
+    let firstStopId = null;
+    try {
+      const list = unwrapList(JSON.parse((await probeUpstream(rtpiPath(`routes/${firstRouteId}/stops`))).text));
+      firstStopId = list[0]?.id ?? list[0]?.stop?.id ?? null;
+    } catch {
+      firstStopId = null;
+    }
+    if (firstStopId != null) {
+      await sample('arrivals', `stops/${firstStopId}/arrivals`);
+      await sample('stopRoutes', `stops/${firstStopId}/routes`);
+    } else {
+      rtpiSamples.arrivals = { skipped: 'no stop id found in stops sample', stopsStatus: stops?.status };
+    }
+    await sample('nearby', `stops/search?lat=42.5847&lon=-87.8212&distance=1500`);
+    report.rtpiSamples = rtpiSamples;
   } catch (err) {
     return sendError(res, err);
   }

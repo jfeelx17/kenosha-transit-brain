@@ -112,6 +112,7 @@ Polling defaults (10 s / 15 s, one user) are well within what that site's own pa
 | Symptom | Fix |
 |---|---|
 | Banner: "Couldn't load routes: ... 403" | Upstream blocked the request. Retry; meanwhile `./scripts/dev.sh --mock`. Check with the curl below. |
+| Banner mentions `text/html instead of JSON` | The site changed its proxy path or page format. Open `/api/debug/discover` and send the output along; `TRANSIT_RTPI_PATH` and `TRANSIT_API_STYLE` in `.env.local` can override the defaults. |
 | Banner: "Couldn't load routes: ..." (any reason) | Open `http://localhost:3000/api/debug/upstream?path=/Region/0/Routes` in a tab. It shows the exact status, content type and body the site sent. Try `?path=/Regions` and `?path=/Route/1/Vehicles` too. |
 | Map shows stops but no route lines | Normal if the site has no KML traces. Lines are best effort. |
 | Buses appear but no stops or lines at all | MapLibre's worker files are missing. Run `cd frontend && node scripts/copy-maplibre-worker.js` (normally automatic on install/dev/build). |
@@ -123,13 +124,21 @@ Polling defaults (10 s / 15 s, one user) are well within what that site's own pa
 
 ### Check the real API from the terminal
 
+kenoshatransit.com is a server-rendered app whose browser code fetches live data through a
+same-origin proxy, `/api/rtpi?path=<portal path>`. The route list is embedded in the page.
+
 ```bash
 UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
-curl -sA "$UA" https://www.kenoshatransit.com/Region/0/Routes | head -c 800; echo
-curl -sA "$UA" https://www.kenoshatransit.com/Route/1/Vehicles | head -c 800; echo
-curl -sA "$UA" https://www.kenoshatransit.com/Stop/<StopID>/Arrivals | head -c 800; echo
+# live buses on Route 1 (id 6037)
+curl -sA "$UA" -H 'Accept: application/json' 'https://www.kenoshatransit.com/api/rtpi?path=routes%2F6037%2Fvehicles' | head -c 800; echo
+# stops on Route 1
+curl -sA "$UA" -H 'Accept: application/json' 'https://www.kenoshatransit.com/api/rtpi?path=routes%2F6037%2Fstops' | head -c 800; echo
+# predictions at a stop (take an id from the stops call)
+curl -sA "$UA" -H 'Accept: application/json' 'https://www.kenoshatransit.com/api/rtpi?path=stops%2F<StopID>%2Farrivals' | head -c 800; echo
 ```
 
-If those print JSON, the app will work with live data. If they print HTML or nothing, the site is
-blocking the request or the IDs differ; the app's `/api/*` routes return that upstream status and
-a snippet of the body so you can see exactly what happened.
+Inside the app the same checks are one click: `/api/debug/discover` (everything at once) and
+`/api/debug/upstream?path=/api/rtpi?path=routes%2F6037%2Fvehicles` (one call, full body with `&full=1`).
+
+Route ids as of September 2026: 1 = 6037, 2 = 6038, 3 = 6039, 4 = 6040, 5 = 6041, 31 = 6042,
+35 = 6043, Amazon Express = 6044, Streetcar = 6075, Lakefront Trolley = 6108, school trippers 6223-6233.
