@@ -44,7 +44,7 @@ passenger load, real arrival predictions.
 1 = 6037, 2 = 6038, 3 = 6039, 4 = 6040, 5 = 6041, 31 = 6042, 35 = 6043,
 Amazon Express = 6044, Streetcar = 6075, Lakefront Trolley = 6108, school trippers 6223–6233.
 
-## v0.2 — Loop in your pocket (in progress)
+## v0.2 — Loop in your pocket (closed 2026-09-05)
 
 **Strategic goal:** Kenosha Loop usable every day from a phone, at $0, without a laptop
 running: a permanent private URL, and the two things a rider actually does at a bus stop
@@ -62,9 +62,28 @@ running: a permanent private URL, and the two things a rider actually does at a 
 - The owner opens the app from the phone's home screen on a non-home network and sees live
   buses, nearby stops and saved stops within a few seconds.
 
+### Closed
+- Deployed on Vercel Hobby from `main` (project `kenosha-loop1`), access key set, gate verified
+  (locked page without the key, unlocked after one visit with it).
+- Verified on the owner's phone over cellular: live buses, real routes, Near me and Saved dock.
+- Follow-up carried into v0.3: the vehicle record's timestamp and load fields need confirming
+  against a raw sample (the popup showed a GPS time that did not change between polls).
+
+## v0.3 — Trust the screen (proposed)
+
+**Strategic goal:** everything the app shows is either live and current, or clearly labelled
+as not. A rider should never wait for a bus that is actually parked.
+
+### Scope
+- Confirm the vehicle record's timestamp and passenger-load fields from a raw sample; fix the
+  mapping; show "as of h:mm:ss" from the real GPS time.
+- Hide or grey out buses whose last GPS fix is older than a few minutes; say so in the popup.
+- Service alerts from the feed (the page data already carries them: Labor Day no-service,
+  stop relocations, detours) shown in the app, with a one-line service status at the top.
+- Timetable fallback in the Next Bus sheet when a stop has no live prediction.
+
 ## Later (candidates)
-- Service alerts from the feed (Labor Day, stop relocations) inside the app.
-- Schedule/GTFS parsing in the data hub so the app can show timetable times when no bus is
-  tracked, and answer questions like "last Route 2 tonight".
+- Schedule/GTFS parsing in the data hub so the app can answer questions like "last Route 2
+  tonight" from the official timetable.
 - Automated build-and-test on every push, plus a scheduled upstream-shape check that alerts
   when kenoshatransit.com changes.
