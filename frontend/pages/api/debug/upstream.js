@@ -2,10 +2,13 @@
 // GET /api/debug/upstream?url=https://api.syncromatics.com/portal/...   (syncromatics hosts only)
 // Add &grep=<regex>&context=300&max=40 to list every match in the body with surrounding text.
 // Add &full=1 to return the whole body (up to 300 KB).
+// Add &ua=honest to send "KenoshaLoop/0.3 (personal…)" instead of the Chrome string
+//   for this one request, or &ua=<anything> to try your own. This is the experiment
+//   behind TRANSIT_USER_AGENT: if honest answers JSON too, stop pretending to be Chrome.
 //
 // Shows exactly what a transit endpoint answers: status, content type, server
 // headers and the first part of the body, both raw and as readable text.
-import { BASE_URL, isMock, probeUpstream, readableSnippet, sendError, sendJson } from '../../../lib/transit';
+import { BASE_URL, HONEST_UA, USER_AGENT, isMock, probeUpstream, readableSnippet, sendError, sendJson } from '../../../lib/transit';
 
 const SAFE_PATH = /^\/[A-Za-z0-9_\-./%?=&]*$/;
 const ALLOWED_HOSTS = /(^|\.)syncromatics\.com$/i;
@@ -39,8 +42,14 @@ export default async function handler(req, res) {
   const maxMatches = Math.min(200, Math.max(1, Number(req.query.max) || 40));
   const full = req.query.full === '1' || req.query.full === 'true';
 
+  const uaArg = typeof req.query.ua === 'string' ? req.query.ua.trim() : '';
+  const userAgent = !uaArg ? USER_AGENT : uaArg === 'honest' ? HONEST_UA : uaArg;
+
   try {
-    const r = await probeUpstream(target.path ?? target.url, { raw: Boolean(grep) || /\.m?js(\?|$)/.test(target.path || target.url) });
+    const r = await probeUpstream(target.path ?? target.url, {
+      raw: Boolean(grep) || /\.m?js(\?|$)/.test(target.path || target.url),
+      headers: { 'User-Agent': userAgent },
+    });
     let json = null;
     try {
       json = JSON.parse(r.text);
@@ -69,6 +78,8 @@ export default async function handler(req, res) {
     return sendJson(res, 200, {
       baseUrl: BASE_URL,
       mockModeActive: isMock(),
+      userAgent,
+      userAgentIsHonest: userAgent === HONEST_UA,
       url: r.url,
       finalUrl: r.finalUrl,
       status: r.status,

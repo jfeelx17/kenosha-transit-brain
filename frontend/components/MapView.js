@@ -7,12 +7,17 @@ import { INLINE_STYLE, resolveMapStyle } from '../lib/mapStyle';
 import { crowdLevel, timeAgo } from '../lib/format';
 import { bearingBetween, distanceMeters } from '../lib/geo';
 import { useFavorites } from '../lib/favorites';
+import { useTrips } from '../lib/trips';
+import { loadSettings, saveSettings } from '../lib/backup';
 import RouteChips from './RouteChips';
 import NextBusSheet from './NextBusSheet';
 import StopsSheet from './StopsSheet';
+import ButlerCard from './ButlerCard';
+import SettingsSheet from './SettingsSheet';
 
 const KENOSHA = { center: [-87.8212, 42.5847], zoom: 12.3 };
-const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 10000;
+// 15 s matches what the site's own page does; one user polling gently.
+const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 15000;
 const POLL_ROUTES_MS = 5 * 60 * 1000;
 const POLL_NEARBY_MS = 2 * 60 * 1000;
 const NEARBY_RADIUS_M = 1600; // about a mile
@@ -33,13 +38,23 @@ export default function MapView() {
   const [basemapFallback, setBasemapFallback] = useState(false);
   // null until routes arrive; then school routes start hidden (they only run on school days).
   const [hiddenState, setHiddenRouteIds] = useState(null);
-  // null | { type: 'stop', stop, from?: 'nearby' | 'saved' } | { type: 'list', mode: 'nearby' | 'saved' }
+  // null | { type: 'stop', stop, from?: 'nearby' | 'saved' } | { type: 'list', mode: 'nearby' | 'saved' } | { type: 'settings' }
   const [sheet, setSheet] = useState(null);
   const [userPos, setUserPos] = useState(null);
   const [locating, setLocating] = useState(false);
   const [locateError, setLocateError] = useState(null);
   const [favorites, toggleFavorite, isFavorite] = useFavorites();
+  const [trips, saveTrip, removeTrip] = useTrips();
+  const [settings, setSettings] = useState({ walkSpeedMps: 1.3 });
   const now = useNow(1000);
+
+  useEffect(() => {
+    setSettings(loadSettings());
+  }, []);
+  const updateSettings = useCallback((next) => {
+    setSettings(next);
+    saveSettings(next);
+  }, []);
 
   const selectedStop = sheet?.type === 'stop' ? sheet.stop : null;
 
@@ -403,6 +418,18 @@ export default function MapView() {
         </div>
       )}
 
+      {!sheet && trips.length > 0 && (
+        <ButlerCard
+          trips={trips}
+          routesById={routesById}
+          vehiclesById={vehiclesById}
+          userPos={userPos}
+          onOpenTrip={(t) =>
+            selectStopFromList({ id: t.stopId, name: t.stopName, lat: t.lat, lng: t.lng, routeIds: stopRouteIds.get(t.stopId) || t.routeIds })
+          }
+        />
+      )}
+
       {!sheet && routes.length > 0 && (
         <nav className="dock" aria-label="Quick actions">
           <button type="button" className={locating ? 'is-busy' : ''} onClick={openNearby}>
@@ -411,7 +438,21 @@ export default function MapView() {
           <button type="button" onClick={openSaved}>
             ★ Saved{favorites.length ? ` (${favorites.length})` : ''}
           </button>
+          <button type="button" className="dock__icon" onClick={() => setSheet({ type: 'settings' })} aria-label="Settings" title="Settings">
+            ⚙
+          </button>
         </nav>
+      )}
+
+      {sheet?.type === 'settings' && (
+        <SettingsSheet
+          trips={trips}
+          onRemoveTrip={removeTrip}
+          settings={settings}
+          onSaveSettings={updateSettings}
+          onImported={() => window.location.reload()}
+          onClose={() => setSheet(null)}
+        />
       )}
 
       {sheet?.type === 'list' && (
@@ -447,6 +488,11 @@ export default function MapView() {
           onBack={sheet.from ? () => setSheet({ type: 'list', mode: sheet.from }) : undefined}
           isFavorite={isFavorite(sheet.stop.id)}
           onToggleFavorite={toggleFavorite}
+          trip={trips.find((t) => t.stopId === String(sheet.stop.id)) || null}
+          onSaveTrip={saveTrip}
+          onDeleteTrip={removeTrip}
+          userPos={userPos}
+          walkSpeedMps={settings.walkSpeedMps}
         />
       )}
     </div>

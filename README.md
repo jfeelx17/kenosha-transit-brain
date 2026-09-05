@@ -28,6 +28,12 @@ A comprehensive, queryable knowledge base for Kenosha Transit that replaces hund
 of Kenosha with live bus positions, a **Next Bus** bottom sheet showing minutes until each bus
 reaches a tapped stop, and a **Crowd Meter** built from each bus's passenger-load percentage.
 
+It also has a **Butler**. Turn a stop into a trip and the app stops answering "when does the bus
+come" and starts answering the question you actually have: *when do I leave?* It counts down to
+your leave time and buzzes the phone when it is time to go. Everything personal stays on the
+device. Why it is built this way, and what gets built next, is in
+[docs/DOCTRINE.md](docs/DOCTRINE.md).
+
 ```
 Browser (Next.js app)  ──/api/vehicles/[routeId]──▶  Next.js API route  ──Chrome UA──▶  kenoshatransit.com/api/rtpi?path=routes/{id}/vehicles
                        ──/api/arrivals/[stopId]───▶  (same-origin, no CORS)          ▶  kenoshatransit.com/api/rtpi?path=stops/{id}/arrivals
@@ -36,6 +42,7 @@ Upload UI (Flask :5000) ── drag & drop PDFs / GTFS ──▶ uploads/ ──
 ```
 
 <p>
+  <img src="docs/screenshots/butler-card.png" alt="Butler card: Leave in 9 min" width="260">
   <img src="docs/screenshots/next-bus-sheet.png" alt="Next Bus sheet with crowd meters" width="260">
   <img src="docs/screenshots/map-vehicle-popup.png" alt="Live map with vehicle popup" width="260">
 </p>
