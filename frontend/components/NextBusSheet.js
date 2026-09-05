@@ -4,9 +4,10 @@ import { usePolling } from '../hooks/usePolling';
 import { useNow } from '../hooks/useNow';
 import { formatClock, formatEta, timeAgo } from '../lib/format';
 import CrowdMeter from './CrowdMeter';
+import TripEditor from './TripEditor';
 
 const POLL_ARRIVALS_MS = Number(process.env.NEXT_PUBLIC_POLL_ARRIVALS_MS) || 15000;
-const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 10000;
+const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 15000;
 
 /**
  * "Next Bus" bottom sheet.
@@ -20,9 +21,24 @@ const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 100
  *  - routesById:    Map<string, route>                    (names, colours, short names)
  *  - vehiclesById:  Map<string, vehicle>                  (already polled by the map)
  *  - onClose():     dismiss the sheet
+ *  - trip / onSaveTrip / onDeleteTrip: the Butler trip for this stop (optional)
  */
-export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, onBack, isFavorite = false, onToggleFavorite }) {
+export default function NextBusSheet({
+  stop,
+  routesById,
+  vehiclesById,
+  onClose,
+  onBack,
+  isFavorite = false,
+  onToggleFavorite,
+  trip = null,
+  onSaveTrip,
+  onDeleteTrip,
+  userPos = null,
+  walkSpeedMps = 1.3,
+}) {
   const [expanded, setExpanded] = useState(true);
+  const [editingTrip, setEditingTrip] = useState(false);
   const now = useNow(1000);
 
   const arrivalsState = usePolling(
@@ -71,7 +87,10 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, 
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  useEffect(() => setExpanded(true), [stop.id]);
+  useEffect(() => {
+    setExpanded(true);
+    setEditingTrip(false);
+  }, [stop.id]);
 
   // Count down between polls so the minutes stay honest.
   const elapsedSeconds = arrivalsState.updatedAt ? (now - arrivalsState.updatedAt) / 1000 : 0;
@@ -107,6 +126,18 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, 
             <span className="sheet__stopid">Stop {stop.id}</span>
           </div>
         </div>
+        {onSaveTrip && (
+          <button
+            type="button"
+            className={`sheet__trip ${trip ? 'is-on' : ''} ${editingTrip ? 'is-editing' : ''}`}
+            onClick={() => setEditingTrip((v) => !v)}
+            aria-pressed={Boolean(trip)}
+            aria-label={trip ? 'Edit this trip' : 'Make this a trip'}
+            title={trip ? 'Butler trip (tap to edit)' : 'Make this a trip: the Butler tells you when to leave'}
+          >
+            🚶
+          </button>
+        )}
         {onToggleFavorite && (
           <button
             type="button"
@@ -125,7 +156,26 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, 
       </header>
 
       <div className="sheet__body">
-        {firstLoad && (
+        {editingTrip && (
+          <TripEditor
+            stop={{ ...stop, routeIds: stop.routeIds || [] }}
+            routes={stopRoutes}
+            userPos={userPos}
+            existing={trip}
+            walkSpeedMps={walkSpeedMps}
+            onSave={(t) => {
+              onSaveTrip(t);
+              setEditingTrip(false);
+            }}
+            onDelete={(id) => {
+              onDeleteTrip?.(id);
+              setEditingTrip(false);
+            }}
+            onCancel={() => setEditingTrip(false)}
+          />
+        )}
+
+        {!editingTrip && firstLoad && (
           <ul className="arrivals" aria-busy="true">
             {[0, 1, 2].map((i) => (
               <li key={i} className="arrival arrival--skeleton" />
@@ -133,7 +183,7 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, 
           </ul>
         )}
 
-        {arrivalsState.data && arrivals.length === 0 && (
+        {!editingTrip && arrivalsState.data && arrivals.length === 0 && (
           <p className="sheet__empty">
             No buses are predicted for this stop right now.
             <br />
@@ -141,7 +191,7 @@ export default function NextBusSheet({ stop, routesById, vehiclesById, onClose, 
           </p>
         )}
 
-        {shown.length > 0 && (
+        {!editingTrip && shown.length > 0 && (
           <ul className="arrivals">
             {shown.map((a, i) => {
               const route = routesById.get(String(a.routeId));

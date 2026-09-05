@@ -34,9 +34,13 @@ const ROUTES_TTL_MS = Number(process.env.TRANSIT_ROUTES_TTL_MS) || 5 * 60 * 1000
 const STALE_HIDE_S = (Number(process.env.TRANSIT_STALE_VEHICLE_MIN) || 10) * 60;
 const STALE_WARN_S = 120;
 
-// The upstream site rejects "bot-looking" requests; present as a normal Chrome tab.
+// How we identify ourselves upstream. Default is a normal Chrome tab because some hosts
+// reject "bot-looking" requests; set TRANSIT_USER_AGENT to an honest identifier once the
+// site's proxy is known to accept it (test with /api/debug/upstream).
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+export const HONEST_UA = 'KenoshaLoop/0.3 (personal, 1 user; https://github.com/jfeelx17/kenosha-transit-brain)';
+export const USER_AGENT = process.env.TRANSIT_USER_AGENT || CHROME_UA;
 
 export function isMock() {
   const v = String(process.env.KENOSHA_MOCK || '').trim().toLowerCase();
@@ -65,7 +69,7 @@ export function readableSnippet(text, max = 400) {
 
 function upstreamHeaders(raw) {
   return {
-    'User-Agent': CHROME_UA,
+    'User-Agent': USER_AGENT,
     Accept: raw ? '*/*' : 'application/json',
     'Accept-Language': 'en-US,en;q=0.9',
     Referer: `${BASE_URL}/`,

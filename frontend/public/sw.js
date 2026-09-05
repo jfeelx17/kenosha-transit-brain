@@ -21,6 +21,18 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Tapping a Butler notification brings the app to the front.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find((c) => 'focus' in c);
+      if (existing) return existing.focus();
+      return self.clients.openWindow('/');
+    })
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;

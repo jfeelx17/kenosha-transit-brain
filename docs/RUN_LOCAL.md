@@ -82,6 +82,22 @@ the service worker on purpose, so install from a production build.
 - **Anywhere, still free:** put the map app on Vercel's free plan with the built-in access key.
   See [DEPLOY_VERCEL.md](DEPLOY_VERCEL.md). That is the intended daily-use setup.
 
+## 4b. The Butler: get told when to leave
+
+Open any stop, tap **🚶** in the sheet header, check the routes that count, set how long your
+walk is and how much buffer you want, then **Save trip**. Close the sheet and a card sits above
+the dock: *Leave in 7 min · Route 2 in 10 min · Bus 4072 · 37% full*, counting down every
+second. Tap the card to open that stop; tap **🔔 Alerts** once to let it vibrate and notify you
+when it is time to go.
+
+Notifications need a secure origin, so they work on `localhost` and on the HTTPS deployment,
+but not over plain HTTP on your Wi-Fi IP. On iPhone they only work after you add the app to the
+home screen, and the permission prompt must come from a tap, which is why the bell is a button.
+
+Trips, saved stops, your walking pace and the prediction log live in that browser only. Nothing
+personal reaches the server. **⚙ → Export JSON** writes the lot to a file; Import restores it on
+a new phone.
+
 ## 5. Configuration
 
 Frontend: copy `frontend/.env.example` to `frontend/.env.local` and edit. Highlights:
@@ -89,13 +105,27 @@ Frontend: copy `frontend/.env.example` to `frontend/.env.local` and edit. Highli
 | Variable | Default | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_MAP_STYLE` | `openfreemap-dark` | `carto-dark`, `osm-dark`, `inline`, or any style URL |
-| `NEXT_PUBLIC_POLL_VEHICLES_MS` | `10000` | how often bus positions refresh |
+| `NEXT_PUBLIC_POLL_VEHICLES_MS` | `15000` | how often bus positions refresh |
 | `NEXT_PUBLIC_POLL_ARRIVALS_MS` | `15000` | how often the Next Bus sheet refreshes |
 | `KENOSHA_MOCK` | empty | `1` serves fake data |
 | `TRANSIT_BASE_URL` | `https://www.kenoshatransit.com` | upstream API |
 | `TRANSIT_CUSTOMER_ID` | empty | only if `/Stop/{id}/Arrivals` needs `?customerId=` |
+| `TRANSIT_USER_AGENT` | a Chrome string | what we tell the upstream we are; see below |
 
 `NEXT_PUBLIC_*` values are baked in at build time: rebuild after changing them.
+
+### Telling the upstream who we are
+
+The proxy calls send a Chrome User-Agent because the site rejects requests that look automated.
+That is worth revisiting rather than keeping forever. Try an honest identifier on one request,
+no redeploy needed:
+
+```
+/api/debug/upstream?path=/api/rtpi?path=routes%2F6037%2Fvehicles&ua=honest
+```
+
+If `isJson` comes back `true`, set `TRANSIT_USER_AGENT=KenoshaLoop/0.3 (personal)` and stop
+pretending. Any other value of `ua=` is sent verbatim, so you can test your own.
 
 Flask: `MAX_UPLOAD_MB` (100), `PORT` (5000), `HOST` (0.0.0.0), `FLASK_DEBUG` (off).
 Example: `MAX_UPLOAD_MB=300 ./scripts/dev.sh`.
@@ -105,7 +135,7 @@ Example: `MAX_UPLOAD_MB=300 ./scripts/dev.sh`.
 Nothing recurring. Everything runs on your own machine. Map tiles come from OpenFreeMap (free,
 no key) or CARTO / openstreetmap.org (free with the attribution the map already shows). The
 transit data comes from the same public endpoints the official kenoshatransit.com site uses.
-Polling defaults (10 s / 15 s, one user) are well within what that site's own page does.
+Polling defaults (15 s, one user) match what that site's own page does.
 
 ## 7. Troubleshooting
 

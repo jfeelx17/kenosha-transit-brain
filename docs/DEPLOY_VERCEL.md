@@ -49,6 +49,9 @@ vercel --prod
 2. Android Chrome: menu -> **Install app** (or **Add to Home screen**).
    iPhone Safari: Share -> **Add to Home Screen**.
 3. Do the same once on the Chromebook if you want it there too.
+4. Open a stop, tap **🚶**, save your real morning trip, then tap **🔔 Alerts** once on the
+   Butler card and allow notifications. On iPhone this only works from the home-screen app,
+   not from a Safari tab, and the prompt has to come from that tap.
 
 ## 4. What runs where
 
@@ -60,7 +63,7 @@ vercel --prod
 | Data hub (Flask), PDFs, knowledge base | Your Chromebook | $0 |
 
 Vercel's free tier limits (100 GB bandwidth, 100 GB-hours of function time per month) are far
-above what one person polling every 10-15 seconds uses.
+above what one person polling every 15 seconds uses.
 
 ## 5. Troubleshooting
 
