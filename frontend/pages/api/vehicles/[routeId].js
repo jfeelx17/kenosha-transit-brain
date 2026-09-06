@@ -1,5 +1,5 @@
 // Proxies GET https://www.kenoshatransit.com/Route/{routeId}/Vehicles
-// (same-origin for the browser, so no CORS; adds a Chrome User-Agent upstream).
+// (same-origin for the browser, so no CORS; identifies itself as KenoshaLoop upstream).
 import { getVehicles, isMock, sendError, sendJson, validId } from '../../../lib/transit';
 
 export default async function handler(req, res) {

@@ -35,7 +35,7 @@ device. Why it is built this way, and what gets built next, is in
 [docs/DOCTRINE.md](docs/DOCTRINE.md).
 
 ```
-Browser (Next.js app)  ──/api/vehicles/[routeId]──▶  Next.js API route  ──Chrome UA──▶  kenoshatransit.com/api/rtpi?path=routes/{id}/vehicles
+Browser (Next.js app)  ──/api/vehicles/[routeId]──▶  Next.js API route  ──KenoshaLoop UA──▶  kenoshatransit.com/api/rtpi?path=routes/{id}/vehicles
                        ──/api/arrivals/[stopId]───▶  (same-origin, no CORS)          ▶  kenoshatransit.com/api/rtpi?path=stops/{id}/arrivals
                        ──/api/routes──────────────▶                                  ▶  kenoshatransit.com/ (route list in page data)
 Upload UI (Flask :5000) ── drag & drop PDFs / GTFS ──▶ uploads/ ──▶ scripts/process_uploads.py ──▶ docs/knowledge_base.json
@@ -43,6 +43,7 @@ Upload UI (Flask :5000) ── drag & drop PDFs / GTFS ──▶ uploads/ ──
 
 <p>
   <img src="docs/screenshots/butler-card.png" alt="Butler card: Leave in 9 min" width="260">
+  <img src="docs/screenshots/service-notices.png" alt="Service notices, urgent first" width="260">
   <img src="docs/screenshots/next-bus-sheet.png" alt="Next Bus sheet with crowd meters" width="260">
   <img src="docs/screenshots/map-vehicle-popup.png" alt="Live map with vehicle popup" width="260">
 </p>

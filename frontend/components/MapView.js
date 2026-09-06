@@ -9,11 +9,14 @@ import { bearingBetween, distanceMeters } from '../lib/geo';
 import { useFavorites } from '../lib/favorites';
 import { useTrips } from '../lib/trips';
 import { loadSettings, saveSettings } from '../lib/backup';
+import { alertsForStop } from '../lib/alerts';
 import RouteChips from './RouteChips';
 import NextBusSheet from './NextBusSheet';
 import StopsSheet from './StopsSheet';
 import ButlerCard from './ButlerCard';
 import SettingsSheet from './SettingsSheet';
+import AlertBanner from './AlertBanner';
+import AlertsSheet from './AlertsSheet';
 
 const KENOSHA = { center: [-87.8212, 42.5847], zoom: 12.3 };
 // 15 s matches what the site's own page does; one user polling gently.
@@ -38,7 +41,8 @@ export default function MapView() {
   const [basemapFallback, setBasemapFallback] = useState(false);
   // null until routes arrive; then school routes start hidden (they only run on school days).
   const [hiddenState, setHiddenRouteIds] = useState(null);
-  // null | { type: 'stop', stop, from?: 'nearby' | 'saved' } | { type: 'list', mode: 'nearby' | 'saved' } | { type: 'settings' }
+  // null | { type: 'stop', stop, from?: 'nearby' | 'saved' } | { type: 'list', mode: 'nearby' | 'saved' }
+  //      | { type: 'settings' } | { type: 'alerts' }
   const [sheet, setSheet] = useState(null);
   const [userPos, setUserPos] = useState(null);
   const [locating, setLocating] = useState(false);
@@ -62,6 +66,7 @@ export default function MapView() {
   const routesState = usePolling('routes', () => fetchJson('/api/routes'), POLL_ROUTES_MS, { keepPrevious: true });
   const routes = routesState.data?.routes ?? [];
   const isMock = Boolean(routesState.data?.mock);
+  const alerts = routesState.data?.alerts ?? [];
   const routesById = useMemo(() => new Map(routes.map((r) => [String(r.id), r])), [routes]);
   const hiddenRouteIds = useMemo(
     () => hiddenState ?? new Set(routes.filter((r) => r.isSchool).map((r) => String(r.id))),
@@ -405,22 +410,26 @@ export default function MapView() {
         onShowAll={() => setHiddenRouteIds(new Set())}
       />
 
-      {routesState.error && !routes.length && (
-        <div className="banner banner--error" role="alert">
-          <span>Couldn't load routes: {routesState.error.message}</span>
-          <button type="button" onClick={routesState.refresh}>Retry</button>
-        </div>
-      )}
-      {basemapFallback && (
-        <div className="banner">
-          <span>Basemap unavailable — showing a plain background. Stops and buses still work.</span>
-          <button type="button" onClick={() => setBasemapFallback(false)}>OK</button>
-        </div>
-      )}
+      <div className="topstack">
+        <AlertBanner alerts={alerts} onOpen={() => setSheet({ type: 'alerts' })} />
+        {routesState.error && !routes.length && (
+          <div className="banner banner--error" role="alert">
+            <span>Couldn't load routes: {routesState.error.message}</span>
+            <button type="button" onClick={routesState.refresh}>Retry</button>
+          </div>
+        )}
+        {basemapFallback && (
+          <div className="banner">
+            <span>Basemap unavailable — showing a plain background. Stops and buses still work.</span>
+            <button type="button" onClick={() => setBasemapFallback(false)}>OK</button>
+          </div>
+        )}
+      </div>
 
       {!sheet && trips.length > 0 && (
         <ButlerCard
           trips={trips}
+          alerts={alerts}
           routesById={routesById}
           vehiclesById={vehiclesById}
           userPos={userPos}
@@ -443,6 +452,8 @@ export default function MapView() {
           </button>
         </nav>
       )}
+
+      {sheet?.type === 'alerts' && <AlertsSheet alerts={alerts} routesById={routesById} onClose={() => setSheet(null)} />}
 
       {sheet?.type === 'settings' && (
         <SettingsSheet
@@ -486,6 +497,7 @@ export default function MapView() {
           vehiclesById={vehiclesById}
           onClose={() => setSheet(null)}
           onBack={sheet.from ? () => setSheet({ type: 'list', mode: sheet.from }) : undefined}
+          alerts={alertsForStop(alerts, sheet.stop)}
           isFavorite={isFavorite(sheet.stop.id)}
           onToggleFavorite={toggleFavorite}
           trip={trips.find((t) => t.stopId === String(sheet.stop.id)) || null}

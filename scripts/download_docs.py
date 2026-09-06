@@ -8,6 +8,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 import re
 
+# Say who we are rather than impersonating a browser. The transit site's proxy accepts this
+# (tested 2026-09-06); if a host ever rejects it, that failure is visible here immediately
+# because these scripts are run by hand.
+USER_AGENT = "KenoshaLoop/0.5 (personal, 1 user; https://github.com/jfeelx17/kenosha-transit-brain)"
+
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -24,7 +29,7 @@ def download_file(url, output_path, is_pdf=False):
     print(f"Downloading: {url}")
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': USER_AGENT
         }
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()

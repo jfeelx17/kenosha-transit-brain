@@ -26,9 +26,9 @@ to breach), keep the server stateless, keep every write of personal data on the 
 Export / Import so that losing the phone is not losing the product.
 
 **"Me now, agency later"** adds two disciplines from day one. Log predictions against reality in
-a shape that could be handed over. And stop pretending to be Chrome: `TRANSIT_USER_AGENT` sets
-the identity we send upstream, and `/api/debug/upstream?ua=honest` tests an honest one against
-the live site. No endpoint the public site does not itself call, and polling at or below the
+a shape that could be handed over. And do not pretend to be Chrome: as of 2026-09-06 the proxy
+answers `200 application/json` to `KenoshaLoop/<version> (personal, 1 user; <repo url>)`, so that
+is what we send. `TRANSIT_USER_AGENT=chrome` restores the old browser string if that ever changes. No endpoint the public site does not itself call, and polling at or below the
 rate the site's own page uses.
 
 ---
@@ -97,7 +97,8 @@ Pitches waiting for a bet. The owner bets; nothing here is started on its own.
 |---|---|---|---|
 | **Background push** | A free cron worker polls your trips every minute and sends a Web Push, so the Butler works with the phone in your pocket | 1–2 weeks | The Butler only works with the app open; this makes it real. Costs a Web Push crypto detour (VAPID plus payload encryption) |
 | **The trust layer** | Analyse months of evidence rows: which routes run on time, at which hour, at which stop | Small batch | Data nobody else has for Kenosha; the thing that makes an agency conversation possible |
-| **Service alerts and timetable fallback** | Show the feed's alerts, and fall back to the timetable when a stop has no live prediction | Small batch | Removes the last "the screen is empty, now what" moment. Carried over from v0.3 |
+| ~~Service alerts~~ | Shipped in v0.5 | — | — |
+| **Timetable fallback** | When a stop has no live prediction, say when the first bus is | Small batch | The last "the screen is empty, now what" moment. Blocked: the page carries no timetable, so this needs a schedule source first — check whether the arrivals feed returns scheduled rows overnight |
 | **The Kenosha Brain** | Ask a question, get an answer from the official PDFs and GTFS plus live data | 2 weeks+ | The original vision. Best after the log and the timetable exist |
 | **Loop for any city** | The engine already speaks the vendor's portal API; another agency is one base URL away | 1 week | The only path from n=1 to n>1, and the one that scales |
 

@@ -9,7 +9,7 @@ Two processes on one machine, no cloud, no accounts:
 
 The Next.js server also proxies the Kenosha Transit real-time API for the browser
 (`/api/vehicles/[routeId]`, `/api/arrivals/[stopId]`, `/api/routes`, `/api/trace/[routeId]`),
-adding a normal Chrome User-Agent so the upstream site answers.
+identifying itself honestly as `KenoshaLoop/<version>` upstream.
 
 ## 0. One-time setup
 
@@ -98,6 +98,17 @@ Trips, saved stops, your walking pace and the prediction log live in that browse
 personal reaches the server. **⚙ → Export JSON** writes the lot to a file; Import restores it on
 a new phone.
 
+## 4c. Service notices
+
+Kenosha Transit posts notices (holiday no-service, detours, a stop that moved) and the app reads
+them from the same page it gets the route list from. What affects today gets a strip under the
+route chips; standing notices fold away behind a count in the sheet. A stop shows the notices that
+name it or its routes, and when nothing is predicted the sheet and the Butler card give the reason
+instead of shrugging.
+
+If the notices ever stop appearing, run `cd frontend && npm run check`. It decodes a real captured
+payload and fails loudly if the site's page format has changed.
+
 ## 5. Configuration
 
 Frontend: copy `frontend/.env.example` to `frontend/.env.local` and edit. Highlights:
@@ -110,22 +121,29 @@ Frontend: copy `frontend/.env.example` to `frontend/.env.local` and edit. Highli
 | `KENOSHA_MOCK` | empty | `1` serves fake data |
 | `TRANSIT_BASE_URL` | `https://www.kenoshatransit.com` | upstream API |
 | `TRANSIT_CUSTOMER_ID` | empty | only if `/Stop/{id}/Arrivals` needs `?customerId=` |
-| `TRANSIT_USER_AGENT` | a Chrome string | what we tell the upstream we are; see below |
+| `TRANSIT_USER_AGENT` | `KenoshaLoop/<version>` | what we tell the upstream we are; `chrome` restores the old browser string |
 
 `NEXT_PUBLIC_*` values are baked in at build time: rebuild after changing them.
 
 ### Telling the upstream who we are
 
-The proxy calls send a Chrome User-Agent because the site rejects requests that look automated.
-That is worth revisiting rather than keeping forever. Try an honest identifier on one request,
-no redeploy needed:
+We send `KenoshaLoop/<version> (personal, 1 user; <repo url>)`. The app used to impersonate Chrome
+on the assumption that the site's proxy rejects anything automated; that was tested on 2026-09-06
+and it does not — an honest identifier gets `200 application/json`. So we say who we are.
+
+Try any identifier on a single request, no redeploy:
 
 ```
-/api/debug/upstream?path=/api/rtpi?path=routes%2F6037%2Fvehicles&ua=honest
+/api/debug/upstream?path=/api/rtpi?path=routes%2F6037%2Fstops&ua=honest
+/api/debug/upstream?path=/api/rtpi?path=routes%2F6037%2Fstops&ua=chrome
 ```
 
-If `isJson` comes back `true`, set `TRANSIT_USER_AGENT=KenoshaLoop/0.3 (personal)` and stop
-pretending. Any other value of `ua=` is sent verbatim, so you can test your own.
+Use a path like `routes/{id}/stops` rather than `vehicles`: stops are there at any hour, so an
+empty array means something is wrong rather than "no buses are running right now". Any other
+value of `ua=` is sent verbatim.
+
+**If the site ever starts blocking us**, set `TRANSIT_USER_AGENT=chrome` in the host's environment.
+That one word restores the old browser string with no code change.
 
 Flask: `MAX_UPLOAD_MB` (100), `PORT` (5000), `HOST` (0.0.0.0), `FLASK_DEBUG` (off).
 Example: `MAX_UPLOAD_MB=300 ./scripts/dev.sh`.
@@ -141,7 +159,7 @@ Polling defaults (15 s, one user) match what that site's own page does.
 
 | Symptom | Fix |
 |---|---|
-| Banner: "Couldn't load routes: ... 403" | Upstream blocked the request. Retry; meanwhile `./scripts/dev.sh --mock`. Check with the curl below. |
+| Banner: "Couldn't load routes: ... 403" | Upstream blocked the request. Retry; meanwhile `./scripts/dev.sh --mock`. If it persists, set `TRANSIT_USER_AGENT=chrome` (see "Telling the upstream who we are") and check with the curl below. |
 | Banner mentions `text/html instead of JSON` | The site changed its proxy path or page format. Open `/api/debug/discover` and send the output along; `TRANSIT_RTPI_PATH` and `TRANSIT_API_STYLE` in `.env.local` can override the defaults. |
 | Banner: "Couldn't load routes: ..." (any reason) | Open `http://localhost:3000/api/debug/upstream?path=/Region/0/Routes` in a tab. It shows the exact status, content type and body the site sent. Try `?path=/Regions` and `?path=/Route/1/Vehicles` too. |
 | Map shows stops but no route lines | Normal if the site has no KML traces. Lines are best effort. |
@@ -158,7 +176,7 @@ kenoshatransit.com is a server-rendered app whose browser code fetches live data
 same-origin proxy, `/api/rtpi?path=<portal path>`. The route list is embedded in the page.
 
 ```bash
-UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+UA='KenoshaLoop/0.5 (personal, 1 user; https://github.com/jfeelx17/kenosha-transit-brain)'
 # live buses on Route 1 (id 6037)
 curl -sA "$UA" -H 'Accept: application/json' 'https://www.kenoshatransit.com/api/rtpi?path=routes%2F6037%2Fvehicles' | head -c 800; echo
 # stops on Route 1
