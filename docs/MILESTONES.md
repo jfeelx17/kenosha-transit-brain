@@ -133,7 +133,7 @@ the buffer. Record the mornings below.
 | Butler card + countdown | Done |
 | Alerts (vibrate, notify, SW click) | Done, verified in a headless browser |
 | Evidence log, export / import, settings | Done |
-| Honest User-Agent experiment | Endpoint ready; needs one run against the live site |
+| Honest User-Agent experiment | Done — the proxy accepts an honest identifier (see v0.5) |
 | Real mornings | Not started — needs the owner |
 
 ### How we know it works (sandbox)
@@ -150,6 +150,47 @@ the buffer. Record the mornings below.
 | Date | Trip | Card said | What happened |
 |---|---|---|---|
 | _(to fill in)_ | | | |
+
+## v0.5 — Night mode (closed 2026-09-06)
+
+**Strategic goal:** the app should never leave you staring at a blank screen. If there are no
+buses, say why. And stop impersonating a browser to get the data.
+
+**What prompted it:** the honest User-Agent probe came back `200 application/json` — and the body
+was `[]`, because it was midnight. That empty array was the whole problem in miniature: out of
+service hours the app showed an empty stop sheet and a Butler card reading "No bus to catch", with
+no reason. Meanwhile the reason was already in the payload we fetch on every load.
+
+### Delivered
+- **Honest identity.** We send `KenoshaLoop/<version> (personal, 1 user; <repo url>)`. The Chrome
+  string is gone from the app and from the three data-hub scripts. `TRANSIT_USER_AGENT=chrome`
+  restores it in one word if the site ever starts blocking us — no code change.
+- **Service alerts**, from `loaderData["routes/transit"].messages[]` in the same page the route
+  list comes from: no new endpoint and no extra upstream request. Banner for what affects today,
+  a sheet with the standing notices folded away, notices on the stops and routes they name.
+- **The Butler explains itself.** "No bus to catch" becomes "No Bus service on Labor day ·
+  Until Tue, Sep 8". An empty stop sheet says the same.
+- **A real-payload regression.** `frontend/lib/fixtures/transit-hydration.json` is the genuine
+  370-element page payload (MapTiler key redacted); `npm run check` decodes it and asserts the
+  route list, the message count, the urgency split and the assignment matching. If GMV changes
+  the page, this fails before the map does.
+
+### The two judgement calls
+- **Urgency by window length, not by volume.** All 8 notices are "active"; six run into 2027
+  (fare rules, a stop that moved last autumn). Showing all of them trains you to ignore the
+  strip on the morning it matters. A window of 14 days or less is what changes your day: on
+  2026-09-06 that is exactly one notice, Labor Day.
+- **Never infer "system-wide" from a wide assignment.** The Labor Day notice is posted against
+  the seven numbered bus routes and says in its own text that the streetcar runs as normal.
+  An earlier version treated "assigned to most routes" as system-wide, which would have told a
+  streetcar rider there was no service. The check script now asserts it does not.
+
+### How we know it works
+- `npm run check`: 20 assertions against the real captured payload.
+- Playwright in mock mode, 13 new checks: the banner carries the urgent notice and not the
+  standing one; the sheet separates the two groups; a stop shows the notices that name it; an
+  empty arrivals list gives the reason; the Butler card names it instead of shrugging.
+- The v0.1, v0.2 and Butler suites still pass.
 
 ## Later (candidates)
 See `docs/DOCTRINE.md` for the betting table. In short: background push while the phone is in

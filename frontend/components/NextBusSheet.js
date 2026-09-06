@@ -5,6 +5,7 @@ import { useNow } from '../hooks/useNow';
 import { formatClock, formatEta, timeAgo } from '../lib/format';
 import CrowdMeter from './CrowdMeter';
 import TripEditor from './TripEditor';
+import { alertWindow } from '../lib/format';
 
 const POLL_ARRIVALS_MS = Number(process.env.NEXT_PUBLIC_POLL_ARRIVALS_MS) || 15000;
 const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 15000;
@@ -22,6 +23,7 @@ const POLL_VEHICLES_MS = Number(process.env.NEXT_PUBLIC_POLL_VEHICLES_MS) || 150
  *  - vehiclesById:  Map<string, vehicle>                  (already polled by the map)
  *  - onClose():     dismiss the sheet
  *  - trip / onSaveTrip / onDeleteTrip: the Butler trip for this stop (optional)
+ *  - alerts:        service notices that apply to this stop (already matched by MapView)
  */
 export default function NextBusSheet({
   stop,
@@ -31,6 +33,7 @@ export default function NextBusSheet({
   onBack,
   isFavorite = false,
   onToggleFavorite,
+  alerts = [],
   trip = null,
   onSaveTrip,
   onDeleteTrip,
@@ -97,6 +100,8 @@ export default function NextBusSheet({
   const stopRoutes = (stop.routeIds || []).map((id) => routesById.get(String(id))).filter(Boolean);
   const shown = expanded ? arrivals : arrivals.slice(0, 1);
   const firstLoad = arrivalsState.loading && !arrivalsState.data;
+  // When nothing is predicted, an urgent notice is usually the reason. Say so instead of shrugging.
+  const urgentAlert = alerts.find((a) => a.urgent) || null;
 
   return (
     <section className={`sheet ${expanded ? 'sheet--expanded' : 'sheet--peek'}`} aria-label={`Next buses at ${stop.name}`}>
@@ -175,6 +180,21 @@ export default function NextBusSheet({
           />
         )}
 
+        {!editingTrip && alerts.length > 0 && (
+          <ul className="stop-notices">
+            {alerts.map((a) => (
+              <li key={a.id} className={a.urgent ? 'is-urgent' : ''}>
+                <span aria-hidden="true">{a.urgent ? '⚠' : 'ⓘ'}</span>
+                <div>
+                  <strong>{a.title}</strong>
+                  {a.urgent && <small> · {alertWindow(a)}</small>}
+                  {a.text && <p>{a.text}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {!editingTrip && firstLoad && (
           <ul className="arrivals" aria-busy="true">
             {[0, 1, 2].map((i) => (
@@ -187,7 +207,11 @@ export default function NextBusSheet({
           <p className="sheet__empty">
             No buses are predicted for this stop right now.
             <br />
-            <small>Buses may not be running at this hour. Try another stop or check back later.</small>
+            <small>
+              {urgentAlert
+                ? `${urgentAlert.title} — ${alertWindow(urgentAlert)}.`
+                : 'Buses may not be running at this hour. Try another stop or check back later.'}
+            </small>
           </p>
         )}
 

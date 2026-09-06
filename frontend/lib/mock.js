@@ -231,3 +231,48 @@ export function trace(routeId) {
     },
   };
 }
+
+// Service alerts in the raw shape of the vendor's page data (see normalizeAlert in transit.js):
+// one urgent system-wide notice covering right now, and one standing route notice, so the alert
+// UI and the Butler's "no bus, and here is why" path can be exercised offline.
+export function alerts(nowMs = Date.now()) {
+  const iso = (ms) => new Date(ms).toISOString().replace('Z', '+00:00');
+  const DAY = 86400000;
+  const routeRefs = ROUTES.map((r) => ({ id: r.ID, name: r.Name, shortName: r.ShortName, color: r.Color, textColor: '#FFFFFF' }));
+  return [
+    {
+      id: 90001,
+      name: 'No bus service on Labor day',
+      text: 'There will be no bus service on Labor day. Service resumes the next weekday.',
+      start: iso(nowMs - 2 * DAY),
+      end: iso(nowMs + 2 * DAY),
+      appMessage: [
+        {
+          id: 1,
+          overrideTitle: 'No bus service on Labor day',
+          overrideText: 'There will be no bus service on Labor day.\nService resumes the next weekday.',
+          sendViaNativePush: true,
+          sendTime: null,
+        },
+      ],
+      webAnnouncementMessages: [],
+      assignments: { global: false, routeTypes: [], stops: [], routes: routeRefs, tags: [] },
+    },
+    {
+      id: 90002,
+      name: 'Pick N Save 75th St - moved stop',
+      text: 'We will no longer be going into the Pick n Save parking lot. The stop is on 57th Ave southbound.',
+      start: iso(nowMs - 300 * DAY),
+      end: iso(nowMs + 300 * DAY),
+      appMessage: [{ id: 2, overrideTitle: null, overrideText: null, sendViaNativePush: false, sendTime: null }],
+      webAnnouncementMessages: [],
+      assignments: {
+        global: false,
+        routeTypes: [],
+        stops: [{ id: 201, name: '52nd St & 22nd Ave', stopCode: '', rtpiNumber: '201' }],
+        routes: [routeRefs[1]],
+        tags: [],
+      },
+    },
+  ];
+}

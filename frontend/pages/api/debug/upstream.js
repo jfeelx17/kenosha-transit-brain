@@ -2,13 +2,13 @@
 // GET /api/debug/upstream?url=https://api.syncromatics.com/portal/...   (syncromatics hosts only)
 // Add &grep=<regex>&context=300&max=40 to list every match in the body with surrounding text.
 // Add &full=1 to return the whole body (up to 300 KB).
-// Add &ua=honest to send "KenoshaLoop/0.3 (personal…)" instead of the Chrome string
-//   for this one request, or &ua=<anything> to try your own. This is the experiment
-//   behind TRANSIT_USER_AGENT: if honest answers JSON too, stop pretending to be Chrome.
+// Add &ua=chrome to send the old browser string for this one request, &ua=honest to force
+//   our own identifier, or &ua=<anything> to try a string of your own. Same resolution as
+//   the TRANSIT_USER_AGENT variable, so this is how you check a rollback before setting it.
 //
 // Shows exactly what a transit endpoint answers: status, content type, server
 // headers and the first part of the body, both raw and as readable text.
-import { BASE_URL, HONEST_UA, USER_AGENT, isMock, probeUpstream, readableSnippet, sendError, sendJson } from '../../../lib/transit';
+import { BASE_URL, HONEST_UA, USER_AGENT, isMock, probeUpstream, readableSnippet, resolveUserAgent, sendError, sendJson } from '../../../lib/transit';
 
 const SAFE_PATH = /^\/[A-Za-z0-9_\-./%?=&]*$/;
 const ALLOWED_HOSTS = /(^|\.)syncromatics\.com$/i;
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
   const full = req.query.full === '1' || req.query.full === 'true';
 
   const uaArg = typeof req.query.ua === 'string' ? req.query.ua.trim() : '';
-  const userAgent = !uaArg ? USER_AGENT : uaArg === 'honest' ? HONEST_UA : uaArg;
+  const userAgent = uaArg ? resolveUserAgent(uaArg) : USER_AGENT;
 
   try {
     const r = await probeUpstream(target.path ?? target.url, {

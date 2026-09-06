@@ -20,8 +20,10 @@
 // Older Syncromatics "Track" sites use /Region/0/Routes, /Route/{id}/Vehicles
 // and /Stop/{id}/Arrivals; those remain as a fallback (TRANSIT_API_STYLE=track).
 
-import * as mock from './mock';
-import { distanceMeters } from './geo';
+import * as mock from './mock.js';
+import { distanceMeters } from './geo.js';
+import { APP_VERSION } from './version.js';
+import { alertIsActive, normalizeAlert, sortAlerts } from './alerts.js';
 
 export const BASE_URL = (process.env.TRANSIT_BASE_URL || 'https://www.kenoshatransit.com').replace(/\/+$/, '');
 const CUSTOMER_ID = process.env.TRANSIT_CUSTOMER_ID || '';
@@ -34,13 +36,24 @@ const ROUTES_TTL_MS = Number(process.env.TRANSIT_ROUTES_TTL_MS) || 5 * 60 * 1000
 const STALE_HIDE_S = (Number(process.env.TRANSIT_STALE_VEHICLE_MIN) || 10) * 60;
 const STALE_WARN_S = 120;
 
-// How we identify ourselves upstream. Default is a normal Chrome tab because some hosts
-// reject "bot-looking" requests; set TRANSIT_USER_AGENT to an honest identifier once the
-// site's proxy is known to accept it (test with /api/debug/upstream).
-const CHROME_UA =
+// How we identify ourselves upstream. We used to send a Chrome string on the assumption that
+// the site's proxy rejects anything that looks automated. Tested on 2026-09-06 through
+// /api/debug/upstream?ua=honest: it answers 200 application/json to an honest identifier, so
+// we stop pretending. TRANSIT_USER_AGENT overrides; the literal value "chrome" restores the
+// old string, so rolling back is one word in the host's environment, no redeploy of code.
+export const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
-export const HONEST_UA = 'KenoshaLoop/0.3 (personal, 1 user; https://github.com/jfeelx17/kenosha-transit-brain)';
-export const USER_AGENT = process.env.TRANSIT_USER_AGENT || CHROME_UA;
+export const HONEST_UA = `KenoshaLoop/${APP_VERSION} (personal, 1 user; https://github.com/jfeelx17/kenosha-transit-brain)`;
+
+export function resolveUserAgent(value) {
+  const v = String(value || '').trim();
+  if (!v) return HONEST_UA;
+  if (v.toLowerCase() === 'chrome') return CHROME_UA;
+  if (v.toLowerCase() === 'honest') return HONEST_UA;
+  return v;
+}
+
+export const USER_AGENT = resolveUserAgent(process.env.TRANSIT_USER_AGENT);
 
 export function isMock() {
   const v = String(process.env.KENOSHA_MOCK || '').trim().toLowerCase();
@@ -543,6 +556,36 @@ export function normalizeArrivals(raw, stopId) {
     .sort((a, b) => a.secondsToArrival - b.secondsToArrival);
 }
 
+// ---------------------------------------------------------------------------
+// Service alerts ("messages" in the vendor's page data)
+//
+// Shape confirmed against the live payload on 2026-09-06 and kept as a fixture in
+// lib/fixtures/transit-hydration.json:
+//
+//   loaderData["routes/transit"].messages[] = {
+//     id, name, text, start, end,
+//     appMessage: [{ overrideTitle, overrideText, sendViaNativePush }],
+//     webAnnouncementMessages: [{ overrideTitle, displayableMarkUpText }],
+//     assignments: { global, routeTypes, stops[{id,name,rtpiNumber}], routes[{id,shortName,...}], tags }
+//   }
+//
+// Dates carry a real offset ("2026-09-04T05:00:00+00:00" is local midnight), so plain instant
+// comparison is correct and no timezone handling is needed.
+// ---------------------------------------------------------------------------
+
+export { alertIsActive, alertsForRoute, alertsForRoutes, alertsForStop, isSystemWide, normalizeAlert, sortAlerts } from './alerts.js';
+
+/** Service alerts embedded in the page: loaderData[*].messages[]. */
+export function alertsFromHydration(html) {
+  const out = [];
+  for (const chunk of hydrationFromHtml(html)) {
+    for (const value of Object.values(chunk?.loaderData || {})) {
+      if (Array.isArray(value?.messages)) out.push(...value.messages);
+    }
+  }
+  return out;
+}
+
 /** KML text -> array of [lng, lat] lines (one per <coordinates> block). */
 export function kmlToLines(kml) {
   const lines = [];
@@ -566,6 +609,29 @@ export function kmlToLines(kml) {
 // ---------------------------------------------------------------------------
 
 let routesCache = { at: 0, routes: null, style: null };
+let shellCache = { at: 0, html: null, inFlight: null };
+
+/**
+ * The site's HTML shell, cached and de-duplicated.
+ *
+ * Both the route list and the service alerts are server-rendered into this one page, so
+ * fetching it once and sharing it keeps our upstream traffic to a single request per 5 minutes.
+ */
+export async function shellHtml({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && shellCache.html && now - shellCache.at < ROUTES_TTL_MS) return shellCache.html;
+  if (shellCache.inFlight) return shellCache.inFlight;
+  shellCache.inFlight = fetchUpstream('/', { raw: true })
+    .then((html) => {
+      shellCache = { at: Date.now(), html, inFlight: null };
+      return html;
+    })
+    .catch((err) => {
+      shellCache.inFlight = null;
+      throw err;
+    });
+  return shellCache.inFlight;
+}
 
 function looksLikeRoutes(list) {
   return list.length > 0 && list.every((r) => r && typeof r === 'object');
@@ -579,8 +645,8 @@ async function portalRoutes() {
   } catch {
     // fall through
   }
-  // 2. Otherwise it is server-rendered into the HTML shell.
-  const html = await fetchUpstream('/', { raw: true });
+  // 2. Otherwise it is server-rendered into the HTML shell (shared with getAlerts).
+  const html = await shellHtml();
   const list = routesFromHydration(html);
   if (!looksLikeRoutes(list)) {
     throw new UpstreamError('Could not find the route list in the site page data (hydration payload)', 502);
@@ -703,6 +769,23 @@ async function patternIndex(routeId) {
   }
   patternsCache.set(key, { at: Date.now(), byId });
   return byId;
+}
+
+/**
+ * Service alerts in force right now, urgent first.
+ *
+ * Free of charge: they ride along in the same HTML shell as the route list, so this adds no
+ * upstream request. Never throws — a missing notice must not take the map down with it.
+ */
+export async function getAlerts({ force = false, now = Date.now() } = {}) {
+  if (isMock()) return sortAlerts(mock.alerts().map(normalizeAlert).filter((a) => alertIsActive(a, now)));
+  try {
+    const html = await shellHtml({ force });
+    const all = alertsFromHydration(html).map(normalizeAlert);
+    return sortAlerts(all.filter((a) => alertIsActive(a, now)));
+  } catch {
+    return [];
+  }
 }
 
 export async function getVehicles(routeId) {

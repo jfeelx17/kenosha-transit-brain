@@ -1,8 +1,8 @@
 {
   "name": "kenosha-loop",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "Kenosha Loop - private live bus map for Kenosha Transit (1-user PWA)",
+  "description": "Kenosha Loop - private live bus map, next-bus sheet and leave-time Butler for Kenosha Transit (1-user PWA)",
   "scripts": {
     "postinstall": "node scripts/copy-maplibre-worker.js",
     "predev": "node scripts/copy-maplibre-worker.js",
@@ -11,7 +11,8 @@
     "dev:mock": "KENOSHA_MOCK=1 next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
-    "start:mock": "KENOSHA_MOCK=1 next start -H 0.0.0.0 -p 3000"
+    "start:mock": "KENOSHA_MOCK=1 next start -H 0.0.0.0 -p 3000",
+    "check": "node scripts/check-transit.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^6.7.0",

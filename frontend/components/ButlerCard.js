@@ -6,6 +6,8 @@ import { adviseTrip, describeAdvice } from '../lib/butler';
 import { notify, permissionState, requestPermission, vibrate } from '../lib/notify';
 import { record as recordPredictions } from '../lib/predictionLog';
 import { distanceMeters } from '../lib/geo';
+import { alertsForRoutes } from '../lib/alerts';
+import { alertWindow } from '../lib/format';
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_ARRIVALS_MS) || 15000;
 const ALERTED_KEY = 'kenosha-loop:alerted:v1';
@@ -36,7 +38,7 @@ function markAlerted(key) {
  *
  * Active trip = the enabled trip whose stop is nearest to you (or the first one).
  */
-export default function ButlerCard({ trips, routesById, vehiclesById, userPos, onOpenTrip }) {
+export default function ButlerCard({ trips, alerts = [], routesById, vehiclesById, userPos, onOpenTrip }) {
   const now = useNow(1000);
   const [perm, setPerm] = useState('default');
   const alertedRef = useRef(new Set());
@@ -77,9 +79,21 @@ export default function ButlerCard({ trips, routesById, vehiclesById, userPos, o
     });
   }, [trip, arrivalsState.data, arrivalsState.updatedAt, vehiclesById, now]);
 
+  // "No bus to catch" is a dead end. If the agency has posted something covering this trip's
+  // routes, that is almost always the reason, so say it rather than leaving you guessing.
+  const tripAlert = useMemo(() => {
+    if (!trip) return null;
+    const matching = alertsForRoutes(alerts, trip.routeIds || []);
+    return matching.find((a) => a.urgent) || matching[0] || null;
+  }, [alerts, trip]);
+
   const route = advice?.arrival ? routesById.get(String(advice.arrival.routeId)) : null;
   const routeLabel = route ? `Route ${route.shortLabel || route.shortName}` : undefined;
   const text = describeAdvice(advice, routeLabel);
+  if (advice?.state === 'no-bus' && tripAlert) {
+    text.title = tripAlert.title;
+    text.detail = tripAlert.urgent ? `No bus to catch · ${alertWindow(tripAlert)}` : 'No bus to catch right now.';
+  }
 
   // Alert once per bus when it becomes time to go.
   useEffect(() => {

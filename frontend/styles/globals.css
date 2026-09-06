@@ -70,8 +70,13 @@ button { font: inherit; }
 .chip:active { transform: scale(0.96); }
 
 /* ---------- banners ---------- */
+/* Everything that sits under the route chips: alerts first, then transient banners. */
+.topstack {
+  position: absolute; top: calc(100px + var(--sat)); left: 10px; right: 10px; z-index: 6;
+  display: flex; flex-direction: column; gap: 6px; pointer-events: none;
+}
+.topstack > * { pointer-events: auto; }
 .banner {
-  position: absolute; top: calc(104px + var(--sat)); left: 10px; right: 10px; z-index: 6;
   display: flex; gap: 10px; align-items: center;
   background: rgba(18, 26, 46, 0.95); border: 1px solid var(--line); border-radius: 12px;
   padding: 10px 12px; font-size: 13px;
@@ -316,3 +321,45 @@ button { font: inherit; }
 .settings__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .settings code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
 .settings .sheet__body { padding-bottom: 16px; }
+
+/* ---------- service notices ---------- */
+.alertbar {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  text-align: left; cursor: pointer; border-radius: 12px; padding: 8px 12px; font: inherit;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+}
+.alertbar--urgent { border-color: rgba(245, 158, 11, 0.55); background: rgba(245, 158, 11, 0.12); }
+.alertbar--quiet { color: var(--muted); }
+.alertbar__icon { flex: 0 0 auto; font-size: 15px; }
+.alertbar--urgent .alertbar__icon { color: var(--warn); }
+.alertbar__text { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.alertbar__text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alertbar__text small { color: var(--muted); font-size: 11px; }
+.alertbar__more { margin-left: auto; flex: 0 0 auto; font-size: 12px; color: var(--muted); }
+
+.notices { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.notice {
+  background: var(--panel-2); border: 1px solid var(--line); border-left: 4px solid var(--line);
+  border-radius: 12px; padding: 10px 12px;
+}
+.notice--urgent { border-left-color: var(--warn); }
+.notice__head { display: flex; align-items: baseline; gap: 8px; }
+.notice__head h3 { font-size: 14px; margin: 0; flex: 1; }
+.notice__when { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.notice__text { margin: 6px 0 0; font-size: 13px; line-height: 1.45; color: var(--muted); white-space: pre-line; }
+.notice__scope { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.notice__stops { font-size: 11px; color: var(--muted); }
+.notice__group { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin: 14px 0 6px; }
+.notice__toggle {
+  background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer;
+  padding: 12px 0 8px; display: block; width: 100%; text-align: left;
+}
+
+.stop-notices { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.stop-notices li {
+  display: flex; gap: 8px; font-size: 13px; line-height: 1.4;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+}
+.stop-notices li.is-urgent { border-color: rgba(245, 158, 11, 0.5); background: rgba(245, 158, 11, 0.1); }
+.stop-notices small { color: var(--muted); }
+.stop-notices p { margin: 4px 0 0; color: var(--muted); white-space: pre-line; }
